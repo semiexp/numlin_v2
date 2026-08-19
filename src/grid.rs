@@ -1,5 +1,6 @@
 use std::ops::{Index, IndexMut};
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Grid<T> {
     height: usize,
     width: usize,
@@ -16,6 +17,14 @@ impl<T> Grid<T> {
             width,
             data: vec![default_value; height * width],
         }
+    }
+
+    pub fn height(&self) -> usize {
+        self.height
+    }
+
+    pub fn width(&self) -> usize {
+        self.width
     }
 
     pub fn flat_index(&self, p: (usize, usize)) -> usize {

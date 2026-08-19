@@ -1,25 +1,10 @@
-use crate::board::{Board, EdgeState};
-use crate::problem::Problem;
+use crate::board::Board;
+use crate::{Answers, EdgeState, Problem};
 
-pub struct Answer {
-    num_answers: u64,
-}
-
-impl Answer {
-    fn new() -> Self {
-        Self { num_answers: 0 }
-    }
-
-    fn register_answer(&mut self, _board: &Board) {
-        // TODO: store actual board state
-        self.num_answers += 1;
-    }
-}
-
-fn backtrack(board: &mut Board, answer: &mut Answer, y: usize, x: usize) {
+fn backtrack(board: &mut Board, answers: &mut Answers, y: usize, x: usize) {
     if y == board.height() {
         // We've reached the end of the board, so we have a complete solution
-        answer.register_answer(board);
+        answers.add_answer(board.to_answer());
         return;
     }
 
@@ -82,20 +67,20 @@ fn backtrack(board: &mut Board, answer: &mut Answer, y: usize, x: usize) {
         }
 
         if !board.inconsistent() {
-            backtrack(board, answer, next_y, next_x);
+            backtrack(board, answers, next_y, next_x);
         }
 
         board.undo();
     }
 }
 
-pub fn solve(problem: Problem) -> Answer {
+pub fn solve(problem: Problem) -> Answers {
     let mut board = Board::new(problem);
 
     // Implement a simple backtracking algorithm to solve the problem
-    let mut answer = Answer::new();
-    backtrack(&mut board, &mut answer, 0, 0);
-    answer
+    let mut answers = Answers::new();
+    backtrack(&mut board, &mut answers, 0, 0);
+    answers
 }
 
 #[cfg(test)]
@@ -105,11 +90,11 @@ mod tests {
     fn problem_from_array(array: &[Vec<i32>]) -> Problem {
         let height = array.len();
         let width = array[0].len();
-        let mut problem = Problem::new(height, width);
+        let mut problem = Problem::new(height, width, None);
         for (y, row) in array.iter().enumerate() {
             for (x, &value) in row.iter().enumerate() {
                 if value > 0 {
-                    problem.set(y, x, Some(value - 1));
+                    problem[(y, x)] = Some(value - 1); // Store as zero-based internally
                 }
             }
         }
@@ -125,7 +110,7 @@ mod tests {
             vec![0, 0, 0, 3],
         ]);
 
-        let answer = solve(problem);
-        assert_eq!(answer.num_answers, 1); // There is one valid solution for this
+        let answers = solve(problem);
+        assert_eq!(answers.len(), 1); // There is one valid solution for this
     }
 }
