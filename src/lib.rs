@@ -1,7 +1,6 @@
 use std::ops::Index;
 pub mod board;
 pub mod grid;
-pub mod problem;
 pub mod solver;
 
 use grid::Grid;
