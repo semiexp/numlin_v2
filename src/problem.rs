@@ -1,3 +1,4 @@
+#[derive(Debug, Clone)]
 pub struct Problem {
     height: usize,
     width: usize,
@@ -11,6 +12,14 @@ impl Problem {
             width,
             data: vec![None; height * width],
         }
+    }
+
+    pub fn height(&self) -> usize {
+        self.height
+    }
+
+    pub fn width(&self) -> usize {
+        self.width
     }
 
     pub fn set(&mut self, row: usize, col: usize, value: Option<i32>) {
