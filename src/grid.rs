@@ -1,5 +1,6 @@
 use std::ops::{Index, IndexMut};
 
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Grid<T> {
     height: usize,
     width: usize,

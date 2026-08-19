@@ -1,5 +1,5 @@
 use crate::grid::Grid;
-use crate::{EdgeState, Problem};
+use crate::{Answer, EdgeState, Problem};
 use std::fmt::Debug;
 
 // Information about the history of decisions made on the board, used for backtracking.
@@ -125,6 +125,10 @@ impl Board {
             self.history.push(History::Inconsistent);
             self.inconsistent = true;
         }
+    }
+
+    pub fn to_answer(&self) -> Answer {
+        Answer::new(self.edge_state.clone())
     }
 
     pub fn decide_edge(&mut self, y: usize, x: usize, state: EdgeState) -> bool {
