@@ -23,9 +23,17 @@ impl Answer {
         Self { edge_state }
     }
 
+    pub fn height(&self) -> usize {
+        (self.edge_state.height() + 1) / 2
+    }
+
+    pub fn width(&self) -> usize {
+        (self.edge_state.width() + 1) / 2
+    }
+
     pub fn get(&self, y: usize, x: usize) -> EdgeState {
-        assert!(y < self.edge_state.height() * 2 - 1);
-        assert!(x < self.edge_state.width() * 2 - 1);
+        assert!(y < self.edge_state.height());
+        assert!(x < self.edge_state.width());
         assert!(y % 2 != x % 2);
         self.edge_state[(y, x)]
     }
