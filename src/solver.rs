@@ -126,6 +126,6 @@ mod tests {
         ]);
 
         let answer = solve(problem);
-        assert_eq!(answer.num_answers, 1); // There are two valid solutions for this
+        assert_eq!(answer.num_answers, 1); // There is one valid solution for this
     }
 }
