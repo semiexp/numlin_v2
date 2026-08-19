@@ -187,6 +187,79 @@ impl Board {
             }
         }
 
+        if self.check_vertex(y / 2, x / 2) {
+            return self.inconsistent();
+        }
+        if self.check_vertex((y + 1) / 2, (x + 1) / 2) {
+            return self.inconsistent();
+        }
+
+        self.inconsistent()
+    }
+
+    fn check_vertex(&mut self, y: usize, x: usize) -> bool {
+        let mut degree = if self.has_clue(y, x) { 1 } else { 0 };
+        let mut undet = 0;
+
+        if x > 0 {
+            match self.get_edge(y * 2, x * 2 - 1) {
+                EdgeState::Undecided => undet += 1,
+                EdgeState::Line => degree += 1,
+                EdgeState::NoLine => {}
+            }
+        }
+        if x < self.width - 1 {
+            match self.get_edge(y * 2, x * 2 + 1) {
+                EdgeState::Undecided => undet += 1,
+                EdgeState::Line => degree += 1,
+                EdgeState::NoLine => {}
+            }
+        }
+        if y > 0 {
+            match self.get_edge(y * 2 - 1, x * 2) {
+                EdgeState::Undecided => undet += 1,
+                EdgeState::Line => degree += 1,
+                EdgeState::NoLine => {}
+            }
+        }
+        if y < self.height - 1 {
+            match self.get_edge(y * 2 + 1, x * 2) {
+                EdgeState::Undecided => undet += 1,
+                EdgeState::Line => degree += 1,
+                EdgeState::NoLine => {}
+            }
+        }
+
+        if degree > 2 || (degree == 1 && undet == 0) {
+            self.set_inconsistent();
+            return self.inconsistent();
+        }
+
+        if undet == 1 {
+            let new_state = if degree == 1 {
+                EdgeState::Line
+            } else {
+                EdgeState::NoLine
+            };
+            if x > 0 && self.get_edge(y * 2, x * 2 - 1) == EdgeState::Undecided {
+                if self.decide_edge(y * 2, x * 2 - 1, new_state) {
+                    return self.inconsistent();
+                }
+            } else if x < self.width - 1 && self.get_edge(y * 2, x * 2 + 1) == EdgeState::Undecided {
+                if self.decide_edge(y * 2, x * 2 + 1, new_state) {
+                    return self.inconsistent();
+                }
+            } else if y > 0 && self.get_edge(y * 2 - 1, x * 2) == EdgeState::Undecided {
+                if self.decide_edge(y * 2 - 1, x * 2, new_state) {
+                    return self.inconsistent();
+                }
+            } else if y < self.height - 1 && self.get_edge(y * 2 + 1, x * 2) == EdgeState::Undecided {
+                if self.decide_edge(y * 2 + 1, x * 2, new_state) {
+                    return self.inconsistent();
+                }
+            }
+        }
+
         self.inconsistent()
     }
 }
