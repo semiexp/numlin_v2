@@ -18,6 +18,14 @@ impl<T> Grid<T> {
         }
     }
 
+    pub fn height(&self) -> usize {
+        self.height
+    }
+
+    pub fn width(&self) -> usize {
+        self.width
+    }
+
     pub fn flat_index(&self, p: (usize, usize)) -> usize {
         let (row, col) = p;
         assert!(row < self.height && col < self.width, "Index out of bounds");

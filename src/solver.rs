@@ -1,5 +1,5 @@
-use crate::board::{Board, EdgeState};
-use crate::problem::Problem;
+use crate::board::Board;
+use crate::{EdgeState, Problem};
 
 pub struct Answer {
     num_answers: u64,
@@ -105,11 +105,11 @@ mod tests {
     fn problem_from_array(array: &[Vec<i32>]) -> Problem {
         let height = array.len();
         let width = array[0].len();
-        let mut problem = Problem::new(height, width);
+        let mut problem = Problem::new(height, width, None);
         for (y, row) in array.iter().enumerate() {
             for (x, &value) in row.iter().enumerate() {
                 if value > 0 {
-                    problem.set(y, x, Some(value - 1));
+                    problem[(y, x)] = Some(value - 1); // Store as zero-based internally
                 }
             }
         }

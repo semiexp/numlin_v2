@@ -1,13 +1,6 @@
 use crate::grid::Grid;
-use crate::problem::Problem;
+use crate::{EdgeState, Problem};
 use std::fmt::Debug;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EdgeState {
-    Undecided,
-    Line,
-    NoLine,
-}
 
 // Information about the history of decisions made on the board, used for backtracking.
 enum History {
@@ -56,7 +49,7 @@ impl Board {
             for x in 0..width {
                 let idx = y * width + x;
 
-                if let Some(value) = problem.get(y, x) {
+                if let Some(value) = problem[(y, x)] {
                     has_clue[(y, x)] = true;
                     another_end[(y, x)] = -value - 2;
                 } else {
