@@ -245,7 +245,8 @@ impl Board {
                 if self.decide_edge(y * 2, x * 2 - 1, new_state) {
                     return self.inconsistent();
                 }
-            } else if x < self.width - 1 && self.get_edge(y * 2, x * 2 + 1) == EdgeState::Undecided {
+            } else if x < self.width - 1 && self.get_edge(y * 2, x * 2 + 1) == EdgeState::Undecided
+            {
                 if self.decide_edge(y * 2, x * 2 + 1, new_state) {
                     return self.inconsistent();
                 }
@@ -253,7 +254,8 @@ impl Board {
                 if self.decide_edge(y * 2 - 1, x * 2, new_state) {
                     return self.inconsistent();
                 }
-            } else if y < self.height - 1 && self.get_edge(y * 2 + 1, x * 2) == EdgeState::Undecided {
+            } else if y < self.height - 1 && self.get_edge(y * 2 + 1, x * 2) == EdgeState::Undecided
+            {
                 if self.decide_edge(y * 2 + 1, x * 2, new_state) {
                     return self.inconsistent();
                 }
