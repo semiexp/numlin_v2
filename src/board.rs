@@ -145,6 +145,9 @@ impl Board {
         self.edge_state[(y, x)] = state;
         self.history.push(History::EdgeState((y, x)));
 
+        let mut another_end1 = None;
+        let mut another_end2 = None;
+
         // Update the another_end grid based on the edge decision
         if state == EdgeState::Line {
             let y1 = y / 2;
@@ -179,9 +182,11 @@ impl Board {
             self.update_another_end(idx2, -1);
             if ae1 >= 0 {
                 self.update_another_end(ae1, ae2);
+                another_end1 = Some(ae1);
             }
             if ae2 >= 0 {
                 self.update_another_end(ae2, ae1);
+                another_end2 = Some(ae2);
             }
         }
 
@@ -303,6 +308,20 @@ impl Board {
         if self.check_vertex((y + 1) / 2, (x + 1) / 2) {
             return self.inconsistent();
         }
+        if let Some(ae) = another_end1 {
+            let ay = ae as usize / self.width;
+            let ax = ae as usize % self.width;
+            if self.check_vertex(ay, ax) {
+                return self.inconsistent();
+            }
+        }
+        if let Some(ae) = another_end2 {
+            let ay = ae as usize / self.width;
+            let ax = ae as usize % self.width;
+            if self.check_vertex(ay, ax) {
+                return self.inconsistent();
+            }
+        }
 
         self.inconsistent()
     }
@@ -310,6 +329,42 @@ impl Board {
     fn check_vertex(&mut self, y: usize, x: usize) -> bool {
         let mut degree = if self.has_clue(y, x) { 1 } else { 0 };
         let mut undet = 0;
+
+        let ae = self.another_end[(y, x)];
+        if ae <= -2 {
+            if x > 0 && self.get_edge(y * 2, x * 2 - 1) == EdgeState::Undecided {
+                let ae2 = self.another_end[(y, x - 1)];
+                if ae2 <= -2 && ae != ae2 {
+                    if self.decide_edge(y * 2, x * 2 - 1, EdgeState::NoLine) {
+                        return self.inconsistent();
+                    }
+                }
+            }
+            if x < self.width - 1 && self.get_edge(y * 2, x * 2 + 1) == EdgeState::Undecided {
+                let ae2 = self.another_end[(y, x + 1)];
+                if ae2 <= -2 && ae != ae2 {
+                    if self.decide_edge(y * 2, x * 2 + 1, EdgeState::NoLine) {
+                        return self.inconsistent();
+                    }
+                }
+            }
+            if y > 0 && self.get_edge(y * 2 - 1, x * 2) == EdgeState::Undecided {
+                let ae2 = self.another_end[(y - 1, x)];
+                if ae2 <= -2 && ae != ae2 {
+                    if self.decide_edge(y * 2 - 1, x * 2, EdgeState::NoLine) {
+                        return self.inconsistent();
+                    }
+                }
+            }
+            if y < self.height - 1 && self.get_edge(y * 2 + 1, x * 2) == EdgeState::Undecided {
+                let ae2 = self.another_end[(y + 1, x)];
+                if ae2 <= -2 && ae != ae2 {
+                    if self.decide_edge(y * 2 + 1, x * 2, EdgeState::NoLine) {
+                        return self.inconsistent();
+                    }
+                }
+            }
+        }
 
         if x > 0 {
             match self.get_edge(y * 2, x * 2 - 1) {
@@ -382,13 +437,15 @@ impl Debug for Board {
             for x in 0..(self.width * 2 - 1) {
                 if y % 2 == 0 && x % 2 == 0 {
                     // Vertex
-                    let v = self.another_end[(y / 2, x / 2)];
-                    if v < 0 {
-                        write!(f, "C")?; // Clue
-                    } else if v == -1 {
-                        write!(f, ".")?; // Not an endpoint
+                    if let Some(n) = self.problem[(y / 2, x / 2)] {
+                        let v = if n < 10 {
+                            n as u8 + b'0'
+                        } else {
+                            n as u8 - 10 + b'A'
+                        };
+                        write!(f, "{}", v as char)?;
                     } else {
-                        write!(f, "E")?; // Endpoint
+                        write!(f, "+")?;
                     }
                 } else if y % 2 == 0 && x % 2 == 1 {
                     // Edge
