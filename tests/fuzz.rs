@@ -17,5 +17,10 @@ fn run_fuzz(instances: &[(usize, usize, u64)]) {
 
 #[test]
 fn test_fuzz() {
-    run_fuzz(&[(6, 6, 10)]);
+    run_fuzz(&[
+        (7, 8, 10),
+        (8, 7, 10),
+        (8, 8, 10),
+        (9, 9, 10),
+    ]);
 }
