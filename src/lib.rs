@@ -7,6 +7,7 @@ use grid::Grid;
 
 // Internal optimization flags
 pub const OPTIMIZATION_DISALLOW_TRIVIAL_DETOUR: bool = true;
+pub const OPTIMIZATION_L_SHAPE_CANONIZATION: bool = true;
 
 pub type Problem = Grid<Option<i32>>;
 
