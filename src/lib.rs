@@ -2,6 +2,7 @@ use std::ops::Index;
 pub mod board;
 pub mod grid;
 pub mod solver;
+pub mod urls;
 
 use grid::Grid;
 
