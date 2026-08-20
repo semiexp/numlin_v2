@@ -184,6 +184,62 @@ impl Board {
             }
         }
 
+        if crate::OPTIMIZATION_DISALLOW_TRIVIAL_DETOUR {
+            if state == EdgeState::Line {
+                if y % 2 == 0 {
+                    if y > 0 && self.get_edge(y - 1, x - 1) == EdgeState::Line {
+                        self.decide_edge(y - 1, x + 1, EdgeState::NoLine);
+                        self.decide_edge(y - 2, x, EdgeState::NoLine);
+                    }
+                    if y > 0 && self.get_edge(y - 1, x + 1) == EdgeState::Line {
+                        self.decide_edge(y - 1, x - 1, EdgeState::NoLine);
+                        self.decide_edge(y - 2, x, EdgeState::NoLine);
+                    }
+                    if y > 0 && self.get_edge(y - 2, x) == EdgeState::Line {
+                        self.decide_edge(y - 1, x - 1, EdgeState::NoLine);
+                        self.decide_edge(y - 1, x + 1, EdgeState::NoLine);
+                    }
+                    if y < self.height * 2 - 2 && self.get_edge(y + 1, x - 1) == EdgeState::Line {
+                        self.decide_edge(y + 1, x + 1, EdgeState::NoLine);
+                        self.decide_edge(y + 2, x, EdgeState::NoLine);
+                    }
+                    if y < self.height * 2 - 2 && self.get_edge(y + 1, x + 1) == EdgeState::Line {
+                        self.decide_edge(y + 1, x - 1, EdgeState::NoLine);
+                        self.decide_edge(y + 2, x, EdgeState::NoLine);
+                    }
+                    if y < self.height * 2 - 2 && self.get_edge(y + 2, x) == EdgeState::Line {
+                        self.decide_edge(y + 1, x - 1, EdgeState::NoLine);
+                        self.decide_edge(y + 1, x + 1, EdgeState::NoLine);
+                    }
+                } else {
+                    if x > 0 && self.get_edge(y - 1, x - 1) == EdgeState::Line {
+                        self.decide_edge(y + 1, x - 1, EdgeState::NoLine);
+                        self.decide_edge(y, x - 2, EdgeState::NoLine);
+                    }
+                    if x > 0 && self.get_edge(y + 1, x - 1) == EdgeState::Line {
+                        self.decide_edge(y - 1, x - 1, EdgeState::NoLine);
+                        self.decide_edge(y, x - 2, EdgeState::NoLine);
+                    }
+                    if x > 0 && self.get_edge(y, x - 2) == EdgeState::Line {
+                        self.decide_edge(y - 1, x - 1, EdgeState::NoLine);
+                        self.decide_edge(y + 1, x - 1, EdgeState::NoLine);
+                    }
+                    if x < self.width * 2 - 2 && self.get_edge(y - 1, x + 1) == EdgeState::Line {
+                        self.decide_edge(y + 1, x + 1, EdgeState::NoLine);
+                        self.decide_edge(y, x + 2, EdgeState::NoLine);
+                    }
+                    if x < self.width * 2 - 2 && self.get_edge(y + 1, x + 1) == EdgeState::Line {
+                        self.decide_edge(y - 1, x + 1, EdgeState::NoLine);
+                        self.decide_edge(y, x + 2, EdgeState::NoLine);
+                    }
+                    if x < self.width * 2 - 2 && self.get_edge(y, x + 2) == EdgeState::Line {
+                        self.decide_edge(y - 1, x + 1, EdgeState::NoLine);
+                        self.decide_edge(y + 1, x + 1, EdgeState::NoLine);
+                    }
+                }
+            }
+        }
+
         if self.check_vertex(y / 2, x / 2) {
             return self.inconsistent();
         }

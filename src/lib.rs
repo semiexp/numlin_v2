@@ -5,6 +5,9 @@ pub mod solver;
 
 use grid::Grid;
 
+// Internal optimization flags
+pub const OPTIMIZATION_DISALLOW_TRIVIAL_DETOUR: bool = true;
+
 pub type Problem = Grid<Option<i32>>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

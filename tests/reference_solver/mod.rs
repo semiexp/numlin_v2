@@ -26,6 +26,15 @@ fn solve_by_csp(problem: &Problem) -> Vec<graph::BoolGridEdgesModel> {
         }
     }
 
+    // forbid trivial detour
+    if numlin_v2::OPTIMIZATION_DISALLOW_TRIVIAL_DETOUR {
+        for y in 0..(height - 1) {
+            for x in 0..(width - 1) {
+                solver.add_expr(is_line.cell_neighbors((y, x)).count_true().le(2));
+            }
+        }
+    }
+
     let mut max_clue = 0;
     for y in 0..height {
         for x in 0..width {
