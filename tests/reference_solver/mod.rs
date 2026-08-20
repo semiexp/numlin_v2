@@ -35,6 +35,42 @@ fn solve_by_csp(problem: &Problem) -> Vec<graph::BoolGridEdgesModel> {
         }
     }
 
+    // L-shape canonization
+    if numlin_v2::OPTIMIZATION_L_SHAPE_CANONIZATION {
+        for y in 0..(height - 1) {
+            for x in 0..(width - 1) {
+                if problem[(y + 1, x + 1)].is_none() {
+                    if y == height - 2 || x == width - 2 {
+                        solver.add_expr(
+                            !(is_line.horizontal.at((y, x)) & is_line.vertical.at((y, x))),
+                        );
+                    } else {
+                        solver.add_expr(
+                            (is_line.horizontal.at((y, x)) & is_line.vertical.at((y, x))).imp(
+                                is_line.horizontal.at((y + 1, x + 1))
+                                    & is_line.vertical.at((y + 1, x + 1)),
+                            ),
+                        );
+                    }
+                }
+                if problem[(y + 1, x)].is_none() {
+                    if y == height - 2 || x == 0 {
+                        solver.add_expr(
+                            !(is_line.horizontal.at((y, x)) & is_line.vertical.at((y, x + 1))),
+                        );
+                    } else {
+                        solver.add_expr(
+                            (is_line.horizontal.at((y, x)) & is_line.vertical.at((y, x + 1))).imp(
+                                is_line.horizontal.at((y + 1, x - 1))
+                                    & is_line.vertical.at((y + 1, x)),
+                            ),
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     let mut max_clue = 0;
     for y in 0..height {
         for x in 0..width {

@@ -133,6 +133,7 @@ impl Board {
 
     pub fn decide_edge(&mut self, y: usize, x: usize, state: EdgeState) -> bool {
         debug_assert!(y % 2 != x % 2);
+        debug_assert!(y < self.height * 2 - 1 && x < self.width * 2 - 1);
 
         if self.edge_state[(y, x)] != EdgeState::Undecided {
             if self.edge_state[(y, x)] != state {
@@ -235,6 +236,62 @@ impl Board {
                     if x < self.width * 2 - 2 && self.get_edge(y, x + 2) == EdgeState::Line {
                         self.decide_edge(y - 1, x + 1, EdgeState::NoLine);
                         self.decide_edge(y + 1, x + 1, EdgeState::NoLine);
+                    }
+                }
+            }
+        }
+
+        if crate::OPTIMIZATION_L_SHAPE_CANONIZATION {
+            if state == EdgeState::Line {
+                if y % 2 == 0 {
+                    if y < self.height * 2 - 2
+                        && !self.has_clue(y / 2 + 1, x / 2 + 1)
+                        && self.get_edge(y + 1, x - 1) == EdgeState::Line
+                    {
+                        if y + 3 < self.height * 2 - 1 && x + 2 < self.width * 2 - 1 {
+                            self.decide_edge(y + 2, x + 2, EdgeState::Line);
+                            self.decide_edge(y + 3, x + 1, EdgeState::Line);
+                        } else {
+                            self.set_inconsistent();
+                            return self.inconsistent();
+                        }
+                    }
+                    if y < self.height * 2 - 2
+                        && !self.has_clue(y / 2 + 1, x / 2)
+                        && self.get_edge(y + 1, x + 1) == EdgeState::Line
+                    {
+                        if y + 3 < self.height * 2 - 1 && x >= 2 {
+                            self.decide_edge(y + 2, x - 2, EdgeState::Line);
+                            self.decide_edge(y + 3, x - 1, EdgeState::Line);
+                        } else {
+                            self.set_inconsistent();
+                            return self.inconsistent();
+                        }
+                    }
+                } else {
+                    if x > 0
+                        && !self.has_clue(y / 2 + 1, x / 2 - 1)
+                        && self.get_edge(y - 1, x - 1) == EdgeState::Line
+                    {
+                        if y + 2 < self.height * 2 - 1 && x >= 3 {
+                            self.decide_edge(y + 1, x - 3, EdgeState::Line);
+                            self.decide_edge(y + 2, x - 2, EdgeState::Line);
+                        } else {
+                            self.set_inconsistent();
+                            return self.inconsistent();
+                        }
+                    }
+                    if x < self.width * 2 - 2
+                        && !self.has_clue(y / 2 + 1, x / 2 + 1)
+                        && self.get_edge(y - 1, x + 1) == EdgeState::Line
+                    {
+                        if y + 2 < self.height * 2 - 1 && x + 3 < self.width * 2 - 1 {
+                            self.decide_edge(y + 1, x + 3, EdgeState::Line);
+                            self.decide_edge(y + 2, x + 2, EdgeState::Line);
+                        } else {
+                            self.set_inconsistent();
+                            return self.inconsistent();
+                        }
                     }
                 }
             }
