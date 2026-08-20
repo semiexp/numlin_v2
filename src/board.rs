@@ -437,13 +437,15 @@ impl Debug for Board {
             for x in 0..(self.width * 2 - 1) {
                 if y % 2 == 0 && x % 2 == 0 {
                     // Vertex
-                    let v = self.another_end[(y / 2, x / 2)];
-                    if v < 0 {
-                        write!(f, "C")?; // Clue
-                    } else if v == -1 {
-                        write!(f, ".")?; // Not an endpoint
+                    if let Some(n) = self.problem[(y / 2, x / 2)] {
+                        let v = if n < 10 {
+                            n as u8 + b'0'
+                        } else {
+                            n as u8 - 10 + b'A'
+                        };
+                        write!(f, "{}", v as char)?;
                     } else {
-                        write!(f, "E")?; // Endpoint
+                        write!(f, "+")?;
                     }
                 } else if y % 2 == 0 && x % 2 == 1 {
                     // Edge
