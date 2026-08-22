@@ -95,6 +95,10 @@ fn backtrack(
         }
 
         if !board.inconsistent() {
+            board.cut_based_propagation();
+        }
+
+        if !board.inconsistent() {
             let (next_y, next_x) = get_next_cell(board, y, x);
             backtrack(board, answers, stats, next_y, next_x);
         }

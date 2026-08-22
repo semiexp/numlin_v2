@@ -490,6 +490,123 @@ impl Board {
 
         self.inconsistent()
     }
+
+    pub fn cut_based_propagation(&mut self) -> bool {
+        loop {
+            let mut max_clue = 0;
+            for y in 0..self.height {
+                for x in 0..self.width {
+                    if let Some(value) = self.problem[(y, x)] {
+                        max_clue = max_clue.max(value);
+                    }
+                }
+            }
+
+            let mut row_capacity_diff = vec![0; self.height];
+            let mut col_capacity_diff = vec![0; self.width];
+
+            let mut clue_pos = vec![(None, None); max_clue as usize + 1];
+            for y in 0..self.height {
+                for x in 0..self.width {
+                    let ae = self.another_end[(y, x)];
+                    if ae <= -2 {
+                        let clue_value = -ae - 2;
+                        if clue_pos[clue_value as usize].0.is_none() {
+                            clue_pos[clue_value as usize].0 = Some((y, x));
+                        } else {
+                            assert!(clue_pos[clue_value as usize].1.is_none());
+                            clue_pos[clue_value as usize].1 = Some((y, x));
+                        }
+                    } else if ae >= 0 {
+                        if y * self.width + x < ae as usize {
+                            let y2 = ae as usize / self.width;
+                            let x2 = ae as usize % self.width;
+
+                            row_capacity_diff[y.min(y2)] += 1;
+                            row_capacity_diff[y.max(y2)] -= 1;
+                            col_capacity_diff[x.min(x2)] += 1;
+                            col_capacity_diff[x.max(x2)] -= 1;
+                        }
+                    }
+                }
+            }
+            for c in 0..=max_clue {
+                if let (Some((y1, x1)), Some((y2, x2))) = clue_pos[c as usize] {
+                    row_capacity_diff[y1.min(y2)] -= 1;
+                    row_capacity_diff[y1.max(y2)] += 1;
+                    col_capacity_diff[x1.min(x2)] -= 1;
+                    col_capacity_diff[x1.max(x2)] += 1;
+                }
+            }
+            for y in 0..self.height {
+                for x in 0..self.width {
+                    if x < self.width - 1 && self.get_edge(y * 2, x * 2 + 1) == EdgeState::Undecided
+                    {
+                        col_capacity_diff[x] += 1;
+                        col_capacity_diff[x + 1] -= 1;
+                    }
+                    if y < self.height - 1
+                        && self.get_edge(y * 2 + 1, x * 2) == EdgeState::Undecided
+                    {
+                        row_capacity_diff[y] += 1;
+                        row_capacity_diff[y + 1] -= 1;
+                    }
+                }
+            }
+            let mut row_capacity = row_capacity_diff;
+            let mut col_capacity = col_capacity_diff;
+            for y in 1..self.height {
+                row_capacity[y] += row_capacity[y - 1];
+            }
+            for x in 1..self.width {
+                col_capacity[x] += col_capacity[x - 1];
+            }
+
+            for y in 0..(self.height - 1) {
+                if row_capacity[y] < 0 {
+                    self.set_inconsistent();
+                    return self.inconsistent();
+                }
+            }
+            for x in 0..(self.width - 1) {
+                if col_capacity[x] < 0 {
+                    self.set_inconsistent();
+                    return self.inconsistent();
+                }
+            }
+
+            let mut has_update = false;
+            for y in 0..(self.height - 1) {
+                if row_capacity[y] == 0 {
+                    for x in 0..self.width {
+                        if self.get_edge(y * 2 + 1, x * 2) == EdgeState::Undecided {
+                            if self.decide_edge(y * 2 + 1, x * 2, EdgeState::NoLine) {
+                                return self.inconsistent();
+                            }
+                            has_update = true;
+                        }
+                    }
+                }
+            }
+            for x in 0..(self.width - 1) {
+                if col_capacity[x] == 0 {
+                    for y in 0..self.height {
+                        if self.get_edge(y * 2, x * 2 + 1) == EdgeState::Undecided {
+                            if self.decide_edge(y * 2, x * 2 + 1, EdgeState::NoLine) {
+                                return self.inconsistent();
+                            }
+                            has_update = true;
+                        }
+                    }
+                }
+            }
+            if !has_update {
+                break;
+            }
+        }
+
+        self.inconsistent()
+    }
 }
 
 impl Debug for Board {
