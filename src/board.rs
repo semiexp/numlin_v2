@@ -580,7 +580,7 @@ impl Board {
                 if row_capacity[y] == 0 {
                     for x in 0..self.width {
                         if self.get_edge(y * 2 + 1, x * 2) == EdgeState::Undecided {
-                            if self.decide_edge(y * 2 + 1, x * 2, EdgeState::NoLine) {
+                            if self.decide_edge(y * 2 + 1, x * 2, EdgeState::Line) {
                                 return self.inconsistent();
                             }
                             has_update = true;
@@ -592,7 +592,7 @@ impl Board {
                 if col_capacity[x] == 0 {
                     for y in 0..self.height {
                         if self.get_edge(y * 2, x * 2 + 1) == EdgeState::Undecided {
-                            if self.decide_edge(y * 2, x * 2 + 1, EdgeState::NoLine) {
+                            if self.decide_edge(y * 2, x * 2 + 1, EdgeState::Line) {
                                 return self.inconsistent();
                             }
                             has_update = true;
