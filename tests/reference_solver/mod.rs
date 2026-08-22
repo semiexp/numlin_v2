@@ -200,7 +200,8 @@ fn flatten_numlin_answer(ans: &Answer) -> Vec<bool> {
 
 pub fn compare_answers(problem: &Problem) {
     let csp_answers = solve_by_csp(problem);
-    let numlin_answers = numlin_v2::solver::solve(problem.clone());
+    let numlin_result = numlin_v2::solver::solve(problem.clone());
+    let numlin_answers = numlin_result.answers();
 
     assert_eq!(csp_answers.len(), numlin_answers.len());
 

@@ -81,3 +81,33 @@ impl Index<usize> for Answers {
         &self.answers[index]
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SearchStats {
+    visited_boards: usize,
+}
+
+impl SearchStats {
+    fn new() -> Self {
+        Self { visited_boards: 0 }
+    }
+
+    pub fn visited_boards(&self) -> usize {
+        self.visited_boards
+    }
+}
+
+pub struct SolveResult {
+    answers: Answers,
+    stats: SearchStats,
+}
+
+impl SolveResult {
+    pub fn answers(&self) -> &Answers {
+        &self.answers
+    }
+
+    pub fn stats(&self) -> &SearchStats {
+        &self.stats
+    }
+}
