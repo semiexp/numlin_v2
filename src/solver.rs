@@ -1,18 +1,38 @@
 use crate::board::Board;
 use crate::{Answers, EdgeState, Problem};
 
+fn get_next_cell(board: &Board, y: usize, x: usize) -> (usize, usize) {
+    let mut y = y;
+    let mut x = x;
+
+    while y < board.height() - 1 {
+        if board.get_edge(y * 2, x * 2 + 1) == EdgeState::Undecided {
+            return (y, x);
+        }
+        if x == board.width() - 2 {
+            y += 1;
+            x = 0;
+        } else {
+            x += 1;
+        }
+    }
+
+    (y, x)
+}
+
 fn backtrack(board: &mut Board, answers: &mut Answers, y: usize, x: usize) {
-    if y == board.height() {
+    // Decide the edges around the vertex at (y, x) and recursively backtrack to find all valid solutions.
+    // Precondition: the up-edge and left-edge of the vertex at (y, x) have already been decided.
+    //
+    // From this precondition, for the rightmost and the bottommost vertices, the right-edge and the down-edge should
+    // have already been decided. Thus we can skip the rightmost and the bottommost vertices in the backtracking process.
+    // This is why `get_next_cell` skips the rightmost and the bottommost vertices.
+
+    if y == board.height() - 1 {
         // We've reached the end of the board, so we have a complete solution
         answers.add_answer(board.to_answer());
         return;
     }
-
-    let (next_y, next_x) = if x + 1 < board.width() {
-        (y, x + 1)
-    } else {
-        (y + 1, 0)
-    };
 
     let cur_degree = if board.has_clue(y, x) { 1 } else { 0 }
         + if x > 0 && board.get_edge(y * 2, x * 2 - 1) == EdgeState::Line {
@@ -67,6 +87,7 @@ fn backtrack(board: &mut Board, answers: &mut Answers, y: usize, x: usize) {
         }
 
         if !board.inconsistent() {
+            let (next_y, next_x) = get_next_cell(board, y, x);
             backtrack(board, answers, next_y, next_x);
         }
 
