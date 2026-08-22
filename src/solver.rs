@@ -108,8 +108,18 @@ pub fn solve(problem: Problem) -> SolveResult {
     let mut board = Board::new(problem);
 
     let mut search_order = vec![];
-    for y in 0..(board.height() - 1) {
-        for x in 0..(board.width() - 1) {
+
+    let height = board.height();
+    let width = board.width();
+
+    // Block-based search order: first search the left half of the board, then the right half of the board.
+    for y in 0..(height - 1) {
+        for x in 0..((width - 1) / 2) {
+            search_order.push((y, x));
+        }
+    }
+    for y in 0..(height - 1) {
+        for x in ((width - 1) / 2)..(width - 1) {
             search_order.push((y, x));
         }
     }
