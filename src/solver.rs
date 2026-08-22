@@ -1,5 +1,5 @@
 use crate::board::Board;
-use crate::{Answers, EdgeState, Problem};
+use crate::{Answers, EdgeState, Problem, SearchStats, SolveResult};
 
 fn get_next_cell(board: &Board, y: usize, x: usize) -> (usize, usize) {
     let mut y = y;
@@ -20,13 +20,21 @@ fn get_next_cell(board: &Board, y: usize, x: usize) -> (usize, usize) {
     (y, x)
 }
 
-fn backtrack(board: &mut Board, answers: &mut Answers, y: usize, x: usize) {
+fn backtrack(
+    board: &mut Board,
+    answers: &mut Answers,
+    stats: &mut SearchStats,
+    y: usize,
+    x: usize,
+) {
     // Decide the edges around the vertex at (y, x) and recursively backtrack to find all valid solutions.
     // Precondition: the up-edge and left-edge of the vertex at (y, x) have already been decided.
     //
     // From this precondition, for the rightmost and the bottommost vertices, the right-edge and the down-edge should
     // have already been decided. Thus we can skip the rightmost and the bottommost vertices in the backtracking process.
     // This is why `get_next_cell` skips the rightmost and the bottommost vertices.
+
+    stats.visited_boards += 1;
 
     if y == board.height() - 1 {
         // We've reached the end of the board, so we have a complete solution
@@ -88,20 +96,21 @@ fn backtrack(board: &mut Board, answers: &mut Answers, y: usize, x: usize) {
 
         if !board.inconsistent() {
             let (next_y, next_x) = get_next_cell(board, y, x);
-            backtrack(board, answers, next_y, next_x);
+            backtrack(board, answers, stats, next_y, next_x);
         }
 
         board.undo();
     }
 }
 
-pub fn solve(problem: Problem) -> Answers {
+pub fn solve(problem: Problem) -> SolveResult {
     let mut board = Board::new(problem);
 
     // Implement a simple backtracking algorithm to solve the problem
     let mut answers = Answers::new();
-    backtrack(&mut board, &mut answers, 0, 0);
-    answers
+    let mut stats = SearchStats::new();
+    backtrack(&mut board, &mut answers, &mut stats, 0, 0);
+    SolveResult { answers, stats }
 }
 
 #[cfg(test)]
@@ -131,7 +140,18 @@ mod tests {
             vec![0, 0, 0, 3],
         ]);
 
-        let answers = solve(problem);
-        assert_eq!(answers.len(), 1); // There is one valid solution for this
+        let result = solve(problem);
+        assert_eq!(result.answers().len(), 1); // There is one valid solution for this
+        assert!(result.stats().visited_boards() > 0);
+    }
+
+    #[test]
+    fn test_visited_boards_counts_backtrack_calls() {
+        let problem = problem_from_array(&[vec![0]]);
+
+        let result = solve(problem);
+
+        assert_eq!(result.answers().len(), 1);
+        assert_eq!(result.stats().visited_boards(), 1);
     }
 }

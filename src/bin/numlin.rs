@@ -19,8 +19,10 @@ fn main() -> ExitCode {
     }
 
     let problem = decode_url(&url);
-    let answers = solver::solve(problem.clone());
+    let result = solver::solve(problem.clone());
+    let answers = result.answers();
     println!("solutions: {}", answers.len());
+    println!("visited boards: {}", result.stats().visited_boards());
 
     if answers.len() == 0 {
         return ExitCode::from(1);

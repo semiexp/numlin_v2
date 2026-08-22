@@ -88,16 +88,18 @@ fn main() {
 
         let started = Instant::now();
         let problem = decode_url(task.url);
-        let answers = solver::solve(problem);
+        let result = solver::solve(problem);
         let elapsed = started.elapsed();
-        let count = answers.len();
+        let count = result.answers().len();
+        let visited_boards = result.stats().visited_boards();
         let matched = task.expected.matches(count);
 
         println!(
-            "task {:>3}: {:>6.3?}, solutions={}, expected={}, {}",
+            "task {:>3}: {:>6.3?}, solutions={}, visited_boards={}, expected={}, {}",
             task_number,
             elapsed,
             count,
+            visited_boards,
             task.expected.name(),
             if matched { "OK" } else { "FAIL" },
         );
