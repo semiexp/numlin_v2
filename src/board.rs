@@ -33,6 +33,11 @@ pub struct Board {
     // x == -1 means that the vertex is not an endpoint.
     another_end: Grid<i32>,
 
+    // disallow_dl and disallow_dr indicate whether having 2 outgoing edges in down and left/right directions
+    // is disallowed for each vertex (due to L-shape canonization). These are used to detect incosistency quickly.
+    disallow_dl: Grid<bool>,
+    disallow_dr: Grid<bool>,
+
     inconsistent: bool,
 
     history: Vec<History>, // History of decisions made on the board, used for backtracking.
@@ -58,6 +63,31 @@ impl Board {
             }
         }
 
+        let mut disallow_dl = Grid::new(height, width, false);
+        let mut disallow_dr = Grid::new(height, width, false);
+        if crate::OPTIMIZATION_L_SHAPE_CANONIZATION {
+            for y in (0..height).rev() {
+                for x in 0..width {
+                    if has_clue[(y, x)] {
+                        disallow_dl[(y, x)] = false;
+                        disallow_dr[(y, x)] = false;
+                        continue;
+                    }
+
+                    if y == height - 1 || x == 0 {
+                        disallow_dl[(y, x)] = true;
+                    } else {
+                        disallow_dl[(y, x)] = disallow_dl[(y + 1, x - 1)];
+                    }
+                    if y == height - 1 || x == width - 1 {
+                        disallow_dr[(y, x)] = true;
+                    } else {
+                        disallow_dr[(y, x)] = disallow_dr[(y + 1, x + 1)];
+                    }
+                }
+            }
+        }
+
         Self {
             height,
             width,
@@ -65,6 +95,8 @@ impl Board {
             has_clue,
             edge_state: Grid::new(2 * height - 1, 2 * width - 1, EdgeState::Undecided),
             another_end,
+            disallow_dl,
+            disallow_dr,
             inconsistent: false,
             history: Vec::new(),
         }
@@ -295,6 +327,35 @@ impl Board {
                             self.decide_edge(y + 2, x + 2, EdgeState::Line);
                         } else {
                             self.set_inconsistent();
+                            return self.inconsistent();
+                        }
+                    }
+                }
+
+                // disallow_dl and disallow_dr
+                if y % 2 == 0 {
+                    if self.disallow_dr[(y / 2, x / 2)]
+                        && y + 1 < self.height * 2 - 1
+                        && x + 1 < self.width * 2 - 1
+                    {
+                        if self.decide_edge(y + 1, x - 1, EdgeState::NoLine) {
+                            return self.inconsistent();
+                        }
+                    }
+                    if self.disallow_dl[(y / 2, x / 2 + 1)] && y + 1 < self.height * 2 - 1 && x >= 1
+                    {
+                        if self.decide_edge(y + 1, x + 1, EdgeState::NoLine) {
+                            return self.inconsistent();
+                        }
+                    }
+                } else {
+                    if self.disallow_dl[(y / 2, x / 2)] && y >= 1 && x >= 1 {
+                        if self.decide_edge(y - 1, x - 1, EdgeState::NoLine) {
+                            return self.inconsistent();
+                        }
+                    }
+                    if self.disallow_dr[(y / 2, x / 2)] && y >= 1 && x + 1 < self.width * 2 - 1 {
+                        if self.decide_edge(y - 1, x + 1, EdgeState::NoLine) {
                             return self.inconsistent();
                         }
                     }
