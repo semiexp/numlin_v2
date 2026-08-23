@@ -509,7 +509,7 @@ impl Board {
             return self.inconsistent();
         }
 
-        if undet == 1 {
+        if undet == 1 || degree >= 2 {
             let new_state = if degree == 1 {
                 EdgeState::Line
             } else {
