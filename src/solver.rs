@@ -1,31 +1,26 @@
 use crate::board::Board;
 use crate::{Answers, EdgeState, Problem, SearchStats, SolveResult};
 
-fn get_next_cell(board: &Board, y: usize, x: usize) -> (usize, usize) {
-    let mut y = y;
-    let mut x = x;
+fn get_next_cell(board: &Board, search_order: &[(usize, usize)], idx: usize) -> usize {
+    let mut idx = idx + 1;
 
-    while y < board.height() - 1 {
+    while idx < search_order.len() {
+        let (y, x) = search_order[idx];
         if board.get_edge(y * 2, x * 2 + 1) == EdgeState::Undecided {
-            return (y, x);
+            return idx;
         }
-        if x == board.width() - 2 {
-            y += 1;
-            x = 0;
-        } else {
-            x += 1;
-        }
+        idx += 1;
     }
 
-    (y, x)
+    idx
 }
 
 fn backtrack(
     board: &mut Board,
     answers: &mut Answers,
     stats: &mut SearchStats,
-    y: usize,
-    x: usize,
+    search_order: &[(usize, usize)],
+    idx: usize,
 ) {
     // Decide the edges around the vertex at (y, x) and recursively backtrack to find all valid solutions.
     // Precondition: the up-edge and left-edge of the vertex at (y, x) have already been decided.
@@ -36,11 +31,13 @@ fn backtrack(
 
     stats.visited_boards += 1;
 
-    if y == board.height() - 1 {
+    if idx == search_order.len() {
         // We've reached the end of the board, so we have a complete solution
         answers.add_answer(board.to_answer());
         return;
     }
+
+    let (y, x) = search_order[idx];
 
     let cur_degree = if board.has_clue(y, x) { 1 } else { 0 }
         + if x > 0 && board.get_edge(y * 2, x * 2 - 1) == EdgeState::Line {
@@ -95,8 +92,12 @@ fn backtrack(
         }
 
         if !board.inconsistent() {
-            let (next_y, next_x) = get_next_cell(board, y, x);
-            backtrack(board, answers, stats, next_y, next_x);
+            board.cut_based_propagation();
+        }
+
+        if !board.inconsistent() {
+            let next_idx = get_next_cell(board, search_order, idx);
+            backtrack(board, answers, stats, search_order, next_idx);
         }
 
         board.undo();
@@ -106,10 +107,27 @@ fn backtrack(
 pub fn solve(problem: Problem) -> SolveResult {
     let mut board = Board::new(problem);
 
+    let mut search_order = vec![];
+
+    let height = board.height();
+    let width = board.width();
+
+    // Block-based search order: first search the left half of the board, then the right half of the board.
+    for y in 0..(height - 1) {
+        for x in 0..((width - 1) / 2) {
+            search_order.push((y, x));
+        }
+    }
+    for y in 0..(height - 1) {
+        for x in ((width - 1) / 2)..(width - 1) {
+            search_order.push((y, x));
+        }
+    }
+
     // Implement a simple backtracking algorithm to solve the problem
     let mut answers = Answers::new();
     let mut stats = SearchStats::new();
-    backtrack(&mut board, &mut answers, &mut stats, 0, 0);
+    backtrack(&mut board, &mut answers, &mut stats, &search_order, 0);
     SolveResult { answers, stats }
 }
 
