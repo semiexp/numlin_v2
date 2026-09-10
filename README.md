@@ -20,13 +20,20 @@ necessary-condition check over those separators.
 
 Graph representatives, neighbor extrema, and boundary capacities are cached.
 Recursive decisions and undo only mark changed endpoints; the next cut check
-updates those vertices and their neighbors. Duplicate partitions between inactive
-vertices are skipped, and only saturated boundaries with positive demand are
-stored for propagation.
+updates their nodes. Neighbors are revisited only when a path representative
+changes. Isolated free vertices and duplicate partitions between inactive vertices
+are skipped; isolated clues still contribute demand. Propagation scans vertices
+only for boundaries that are actually saturated with positive demand.
+
+Vertex degrees are derived from the existing path endpoints and incident-edge
+counts, avoiding repeated scans of their four edges. Already decided edges take
+a short return path, and decisions stop once a branch is inconsistent. Vertex
+coordinates are cached for cut updates and undo.
 
 Unit tests compare the straight-cut values against the original full-board
 calculation, and independently rebuild the contracted graph and enumerate every
-vertex boundary to verify its capacities and demands. To enable these expensive
+vertex boundary to verify its capacities and demands. The endpoint-derived degrees
+are also compared with the actual incident lines. To enable these expensive
 checks in the reference-solver and fuzz integration tests, run:
 
 ```sh

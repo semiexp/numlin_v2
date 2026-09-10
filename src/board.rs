@@ -37,6 +37,7 @@ pub struct Board {
     // x <= -2 means that the vertex is an endpoint and is connected to "clue" of value -x-2.
     // x == -1 means that the vertex is not an endpoint.
     another_end: Grid<i32>,
+    vertex_positions: Vec<(usize, usize)>,
 
     // disallow_dl and disallow_dr indicate whether having 2 outgoing edges in down and left/right directions
     // is disallowed for each vertex (due to L-shape canonization). These are used to detect incosistency quickly.
@@ -123,6 +124,9 @@ impl Board {
             usable_edges,
             edge_state: Grid::new(2 * height - 1, 2 * width - 1, EdgeState::Undecided),
             another_end,
+            vertex_positions: (0..height)
+                .flat_map(|y| (0..width).map(move |x| (y, x)))
+                .collect(),
             disallow_dl,
             disallow_dr,
             row_capacity_diff: vec![0; height],
@@ -246,8 +250,8 @@ impl Board {
     }
 
     fn update_cut_pair(&mut self, p: i32, q: i32, delta: i32) {
-        let (y1, x1) = (p as usize / self.width, p as usize % self.width);
-        let (y2, x2) = (q as usize / self.width, q as usize % self.width);
+        let (y1, x1) = self.vertex_positions[p as usize];
+        let (y2, x2) = self.vertex_positions[q as usize];
         self.row_capacity_diff[y1.min(y2)] += delta;
         self.row_capacity_diff[y1.max(y2)] -= delta;
         self.col_capacity_diff[x1.min(x2)] += delta;
@@ -314,10 +318,14 @@ impl Board {
         Answer::new(self.edge_state.clone())
     }
 
+    #[inline]
     pub fn decide_edge(&mut self, y: usize, x: usize, state: EdgeState) -> bool {
         debug_assert!(y % 2 != x % 2);
         debug_assert!(y < self.height * 2 - 1 && x < self.width * 2 - 1);
 
+        if self.inconsistent {
+            return true;
+        }
         if self.edge_state[(y, x)] != EdgeState::Undecided {
             if self.edge_state[(y, x)] != state {
                 self.set_inconsistent();
@@ -325,6 +333,11 @@ impl Board {
             return self.inconsistent();
         }
 
+        self.decide_new_edge(y, x, state)
+    }
+
+    // Keep the common already-decided case out of this recursive slow path.
+    fn decide_new_edge(&mut self, y: usize, x: usize, state: EdgeState) -> bool {
         if state != EdgeState::Undecided {
             self.update_cut_edge(y, x, -1);
         }
@@ -528,15 +541,13 @@ impl Board {
             return self.inconsistent();
         }
         if let Some(ae) = another_end1 {
-            let ay = ae as usize / self.width;
-            let ax = ae as usize % self.width;
+            let (ay, ax) = self.vertex_positions[ae as usize];
             if self.check_vertex(ay, ax) {
                 return self.inconsistent();
             }
         }
         if let Some(ae) = another_end2 {
-            let ay = ae as usize / self.width;
-            let ax = ae as usize % self.width;
+            let (ay, ax) = self.vertex_positions[ae as usize];
             if self.check_vertex(ay, ax) {
                 return self.inconsistent();
             }
@@ -645,10 +656,18 @@ impl Board {
         }
     }
 
-    fn check_vertex(&mut self, y: usize, x: usize) -> bool {
-        let mut degree = if self.has_clue(y, x) { 1 } else { 0 };
-        let mut undet = 0;
+    // another_end already records whether a vertex is unused, an endpoint, or
+    // internal. This is its degree including the implicit edge at a clue.
+    fn vertex_degree(&self, y: usize, x: usize) -> u8 {
+        let p = (y * self.width + x) as i32;
+        match self.another_end[p] {
+            -1 => 2,
+            ae if ae == p => 0,
+            _ => 1,
+        }
+    }
 
+    fn check_vertex(&mut self, y: usize, x: usize) -> bool {
         let ae = self.another_end[(y, x)];
         if ae <= -2 {
             if x > 0 && self.get_edge(y * 2, x * 2 - 1) == EdgeState::Undecided {
@@ -685,34 +704,10 @@ impl Board {
             }
         }
 
-        if x > 0 {
-            match self.get_edge(y * 2, x * 2 - 1) {
-                EdgeState::Undecided => undet += 1,
-                EdgeState::Line => degree += 1,
-                EdgeState::NoLine => {}
-            }
-        }
-        if x < self.width - 1 {
-            match self.get_edge(y * 2, x * 2 + 1) {
-                EdgeState::Undecided => undet += 1,
-                EdgeState::Line => degree += 1,
-                EdgeState::NoLine => {}
-            }
-        }
-        if y > 0 {
-            match self.get_edge(y * 2 - 1, x * 2) {
-                EdgeState::Undecided => undet += 1,
-                EdgeState::Line => degree += 1,
-                EdgeState::NoLine => {}
-            }
-        }
-        if y < self.height - 1 {
-            match self.get_edge(y * 2 + 1, x * 2) {
-                EdgeState::Undecided => undet += 1,
-                EdgeState::Line => degree += 1,
-                EdgeState::NoLine => {}
-            }
-        }
+        // Re-read the endpoint after the recursive decisions above. Counting
+        // Line/Undecided edges by scanning all four neighbors is unnecessary.
+        let degree = self.vertex_degree(y, x);
+        let undet = self.usable_edges[(y, x)] + self.has_clue(y, x) as u8 - degree;
 
         if degree > 2 || (degree == 1 && undet == 0) {
             self.set_inconsistent();
@@ -796,6 +791,26 @@ impl Board {
                     usable += 1;
                 }
                 assert_eq!(self.usable_edges[(y, x)], usable, "usable edges at ({y}, {x})");
+            }
+        }
+        if !self.inconsistent {
+            for y in 0..self.height {
+                for x in 0..self.width {
+                    let mut degree = self.has_clue(y, x) as u8;
+                    if y > 0 && self.get_edge(2 * y - 1, 2 * x) == EdgeState::Line {
+                        degree += 1;
+                    }
+                    if y + 1 < self.height && self.get_edge(2 * y + 1, 2 * x) == EdgeState::Line {
+                        degree += 1;
+                    }
+                    if x > 0 && self.get_edge(2 * y, 2 * x - 1) == EdgeState::Line {
+                        degree += 1;
+                    }
+                    if x + 1 < self.width && self.get_edge(2 * y, 2 * x + 1) == EdgeState::Line {
+                        degree += 1;
+                    }
+                    assert_eq!(self.vertex_degree(y, x), degree, "degree at ({y}, {x})");
+                }
             }
         }
         let mut max_clue = 0;
