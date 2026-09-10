@@ -1,6 +1,15 @@
 # numlin_v2
 The 2nd edition of a Numberlink solver
 
+Paths carrying the same clue may not pass one another without taking an available
+straight shortcut. Adjacent vertices with the same clue label must be joined. If
+they are farther apart in a row or column and every intervening vertex is confirmed
+unused, the branch is rejected. Unknown cells and other paths block this check.
+Labels cover internal vertices and completed paths, and are assigned incrementally
+when a clue-free path attaches to a clue. Labels are restored on undo, and only
+straight runs from changed vertices are rescanned. This canonicalization removes
+longer solutions that can be shortened without disturbing any other path.
+
 U-shaped detours one cell deep and of any length are canonicalized in all four
 orientations. If every interior vertex of the straight shortcut is clue-free and
 confirmed unused, a complete U is rejected, or its last undecided edge is
@@ -39,6 +48,10 @@ checks in the reference-solver and fuzz integration tests, run:
 ```sh
 cargo test --features verify-cut-capacity
 ```
+
+Verification also rebuilds path labels from the original clues and line edges,
+and enumerates all straight shortcut pairs to check incremental propagation. The
+independent CSP solver enforces the shortcut rule using its final line labels.
 
 The verification code is excluded from normal builds (including debug builds).
 For performance measurements, leave the feature disabled:

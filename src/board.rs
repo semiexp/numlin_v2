@@ -1,4 +1,5 @@
 use crate::grid::Grid;
+use crate::shortcuts::{Shortcut, Shortcuts};
 use crate::vertex_cut::VertexCuts;
 use crate::{Answer, EdgeState, Problem};
 use std::fmt::Debug;
@@ -14,6 +15,9 @@ enum History {
 
     // AnotherEnd(p, v) means that the vertex at position p was previously connected to vertex v, and is now being updated.
     AnotherEnd(i32, i32),
+
+    // A previously clue-free path vertex has acquired its clue's label.
+    PathClue(i32),
 
     // Inconsistent means that the board was previously inconsistent, and is now being updated to be consistent.
     Inconsistent,
@@ -38,6 +42,10 @@ pub struct Board {
     // x == -1 means that the vertex is not an endpoint.
     another_end: Grid<i32>,
     vertex_positions: Vec<(usize, usize)>,
+
+    // Unlike another_end, labels remain on internal and completed path vertices.
+    path_clue: Grid<i32>,
+    shortcuts: Shortcuts,
 
     // disallow_dl and disallow_dr indicate whether having 2 outgoing edges in down and left/right directions
     // is disallowed for each vertex (due to L-shape canonization). These are used to detect incosistency quickly.
@@ -72,6 +80,7 @@ impl Board {
         let width = problem.width();
         let mut has_clue = Grid::new(height, width, false);
         let mut another_end = Grid::new(height, width, -1);
+        let mut path_clue = Grid::new(height, width, -1);
         let mut max_clue = 0;
         let mut usable_edges = Grid::new(height, width, 0);
 
@@ -85,6 +94,7 @@ impl Board {
                     max_clue = max_clue.max(value);
                     has_clue[(y, x)] = true;
                     another_end[(y, x)] = -value - 2;
+                    path_clue[(y, x)] = value;
                 } else {
                     another_end[(y, x)] = idx as i32;
                 }
@@ -124,6 +134,8 @@ impl Board {
             usable_edges,
             edge_state: Grid::new(2 * height - 1, 2 * width - 1, EdgeState::Undecided),
             another_end,
+            path_clue,
+            shortcuts: Shortcuts::new(height, width),
             vertex_positions: (0..height)
                 .flat_map(|y| (0..width).map(move |x| (y, x)))
                 .collect(),
@@ -199,8 +211,17 @@ impl Board {
                 History::Checkpoint => break,
                 History::EdgeState((y, x)) => {
                     if self.edge_state[(y, x)] == EdgeState::NoLine {
+                        if self.usable_edges[(y / 2, x / 2)] == 0 {
+                            self.shortcuts.vertex_changed(y / 2, x / 2);
+                        }
+                        if self.usable_edges[((y + 1) / 2, (x + 1) / 2)] == 0 {
+                            self.shortcuts.vertex_changed((y + 1) / 2, (x + 1) / 2);
+                        }
                         self.usable_edges[(y / 2, x / 2)] += 1;
                         self.usable_edges[((y + 1) / 2, (x + 1) / 2)] += 1;
+                    } else {
+                        self.shortcuts.vertex_changed(y / 2, x / 2);
+                        self.shortcuts.vertex_changed((y + 1) / 2, (x + 1) / 2);
                     }
                     if self.edge_state[(y, x)] != EdgeState::Undecided {
                         self.update_cut_edge(y, x, 1);
@@ -209,6 +230,11 @@ impl Board {
                 }
                 History::AnotherEnd(p, v) => {
                     self.replace_another_end(p, v);
+                }
+                History::PathClue(p) => {
+                    self.path_clue[p] = -1;
+                    let (y, x) = self.vertex_positions[p as usize];
+                    self.shortcuts.vertex_changed(y, x);
                 }
                 History::Inconsistent => {
                     self.inconsistent = false;
@@ -314,6 +340,62 @@ impl Board {
         }
     }
 
+    // Only the newly attached clue-free portion needs relabeling. A vertex is
+    // labeled at most once along a branch; walking the path needs no allocation.
+    fn label_path(&mut self, mut p: i32, mut previous: i32, end: i32, clue: i32) {
+        loop {
+            debug_assert_eq!(self.path_clue[p], -1);
+            self.history.push(History::PathClue(p));
+            self.path_clue[p] = clue;
+            let (y, x) = self.vertex_positions[p as usize];
+            self.shortcuts.vertex_changed(y, x);
+            if p == end {
+                break;
+            }
+            let width = self.width as i32;
+            let next = if y > 0 && p - width != previous
+                && self.get_edge(2 * y - 1, 2 * x) == EdgeState::Line
+            {
+                p - width
+            } else if y + 1 < self.height && p + width != previous
+                && self.get_edge(2 * y + 1, 2 * x) == EdgeState::Line
+            {
+                p + width
+            } else if x > 0 && p - 1 != previous
+                && self.get_edge(2 * y, 2 * x - 1) == EdgeState::Line
+            {
+                p - 1
+            } else if x + 1 < self.width && p + 1 != previous
+                && self.get_edge(2 * y, 2 * x + 1) == EdgeState::Line
+            {
+                p + 1
+            } else {
+                unreachable!("clue-free path ended before its recorded endpoint");
+            };
+            previous = p;
+            p = next;
+        }
+    }
+
+    fn propagate_shortcuts(&mut self) -> bool {
+        while let Some(shortcut) = self.shortcuts.next(
+            &self.path_clue, &self.usable_edges, &self.edge_state,
+        ) {
+            match shortcut {
+                Shortcut::Join((y, x)) => {
+                    if self.decide_edge(y, x, EdgeState::Line) {
+                        return true;
+                    }
+                }
+                Shortcut::Conflict => {
+                    self.set_inconsistent();
+                    return true;
+                }
+            }
+        }
+        self.inconsistent()
+    }
+
     pub fn to_answer(&self) -> Answer {
         Answer::new(self.edge_state.clone())
     }
@@ -344,9 +426,23 @@ impl Board {
         if state == EdgeState::NoLine {
             self.usable_edges[(y / 2, x / 2)] -= 1;
             self.usable_edges[((y + 1) / 2, (x + 1) / 2)] -= 1;
+            if self.usable_edges[(y / 2, x / 2)] == 0 {
+                self.shortcuts.vertex_changed(y / 2, x / 2);
+            }
+            if self.usable_edges[((y + 1) / 2, (x + 1) / 2)] == 0 {
+                self.shortcuts.vertex_changed((y + 1) / 2, (x + 1) / 2);
+            }
         }
         self.edge_state[(y, x)] = state;
         self.history.push(History::EdgeState((y, x)));
+
+        if crate::OPTIMIZATION_DISALLOW_SAME_CLUE_SHORTCUT && state == EdgeState::NoLine {
+            let clue = self.path_clue[(y / 2, x / 2)];
+            if clue >= 0 && clue == self.path_clue[((y + 1) / 2, (x + 1) / 2)] {
+                self.set_inconsistent();
+                return true;
+            }
+        }
 
         let mut another_end1 = None;
         let mut another_end2 = None;
@@ -379,6 +475,12 @@ impl Board {
                 // If both vertices are already connected to each other, we cannot connect them again (this would create a loop)
                 self.set_inconsistent();
                 return self.inconsistent();
+            }
+
+            if ae1 <= -2 && ae2 >= 0 {
+                self.label_path(idx2, idx1, ae2, -ae1 - 2);
+            } else if ae2 <= -2 && ae1 >= 0 {
+                self.label_path(idx1, idx2, ae1, -ae2 - 2);
             }
 
             self.update_another_end(idx1, -1);
@@ -754,6 +856,9 @@ impl Board {
     // oracle. Integration tests can opt in; ordinary builds contain none of it.
     #[cfg(any(test, feature = "verify-cut-capacity"))]
     fn verify_cut_capacity(&mut self) {
+        if !self.inconsistent {
+            self.verify_path_clues();
+        }
         self.vertex_cuts
             .sync(&self.another_end, &self.edge_state, &self.cut_clue_pos);
         self.vertex_cuts.verify(&self.another_end, &self.edge_state);
@@ -891,8 +996,46 @@ impl Board {
         }
     }
 
+    #[cfg(any(test, feature = "verify-cut-capacity"))]
+    fn verify_path_clues(&self) {
+        // Rebuild every component from actual Line edges and the original clues.
+        // This deliberately does not use another_end or the cached path labels.
+        let mut expected = Grid::new(self.height, self.width, -1);
+        let mut pending = Vec::new();
+        for y in 0..self.height {
+            for x in 0..self.width {
+                if let Some(clue) = self.problem[(y, x)] {
+                    pending.push((y, x, clue));
+                }
+            }
+        }
+        while let Some((y, x, clue)) = pending.pop() {
+            if expected[(y, x)] >= 0 {
+                assert_eq!(expected[(y, x)], clue);
+                continue;
+            }
+            expected[(y, x)] = clue;
+            if y > 0 && self.get_edge(2 * y - 1, 2 * x) == EdgeState::Line {
+                pending.push((y - 1, x, clue));
+            }
+            if y + 1 < self.height && self.get_edge(2 * y + 1, 2 * x) == EdgeState::Line {
+                pending.push((y + 1, x, clue));
+            }
+            if x > 0 && self.get_edge(2 * y, 2 * x - 1) == EdgeState::Line {
+                pending.push((y, x - 1, clue));
+            }
+            if x + 1 < self.width && self.get_edge(2 * y, 2 * x + 1) == EdgeState::Line {
+                pending.push((y, x + 1, clue));
+            }
+        }
+        assert_eq!(self.path_clue, expected, "path clue labels: {self:?}");
+    }
+
     pub fn cut_based_propagation(&mut self) -> bool {
         loop {
+            if crate::OPTIMIZATION_DISALLOW_SAME_CLUE_SHORTCUT && self.propagate_shortcuts() {
+                return true;
+            }
             #[cfg(any(test, feature = "verify-cut-capacity"))]
             self.verify_cut_capacity();
 
@@ -1027,6 +1170,128 @@ mod tests {
     use rand::rngs::StdRng;
     use rand::seq::SliceRandom;
     use rand::{Rng, SeedableRng};
+
+    #[test]
+    fn path_labels_cover_late_attachment_completion_and_nested_undo() {
+        for reverse in [false, true] {
+            let mut problem = Problem::new(7, 7, None);
+            problem[(3, 0)] = Some(17);
+            problem[(3, 6)] = Some(17);
+            let mut board = Board::new(problem);
+            for x in 2..4 {
+                assert!(!board.decide_edge(6, 2 * x + 1, EdgeState::Line));
+            }
+            let free_edges = board.edge_state.clone();
+            let free_labels = board.path_clue.clone();
+            board.add_checkpoint();
+            let attach = if reverse { [4, 5] } else { [1, 0] };
+            for x in attach {
+                assert!(!board.decide_edge(6, 2 * x + 1, EdgeState::Line));
+            }
+            for x in 2..=4 {
+                assert_eq!(board.path_clue[(3, x)], 17);
+            }
+            board.verify_cut_capacity();
+            let attached_edges = board.edge_state.clone();
+            let attached_labels = board.path_clue.clone();
+            board.add_checkpoint();
+            let finish = if reverse { [1, 0] } else { [4, 5] };
+            for x in finish {
+                assert!(!board.decide_edge(6, 2 * x + 1, EdgeState::Line));
+            }
+            for x in 0..7 {
+                assert_eq!(board.path_clue[(3, x)], 17);
+                assert_eq!(board.another_end[(3, x)], -1);
+            }
+            assert!(!board.propagate_shortcuts());
+            board.verify_cut_capacity();
+            board.undo();
+            assert_eq!(board.edge_state, attached_edges);
+            assert_eq!(board.path_clue, attached_labels);
+            board.undo();
+            assert_eq!(board.edge_state, free_edges);
+            assert_eq!(board.path_clue, free_labels);
+            // Recheck after a scan in a descendant consumed the parent's work.
+            assert!(!board.propagate_shortcuts());
+        }
+    }
+
+    #[test]
+    fn adjacent_same_clues_join_or_reject_and_undo() {
+        for vertical in [false, true] {
+            let mut problem = Problem::new(5, 5, None);
+            problem[(2, 2)] = Some(17);
+            problem[if vertical { (3, 2) } else { (2, 3) }] = Some(17);
+            let edge = if vertical { (5, 4) } else { (4, 5) };
+            let mut board = Board::new(problem);
+            board.add_checkpoint();
+            assert!(board.decide_edge(edge.0, edge.1, EdgeState::NoLine));
+            board.undo();
+            assert!(!board.propagate_shortcuts());
+            assert_eq!(board.get_edge(edge.0, edge.1), EdgeState::Line);
+            board.verify_cut_capacity();
+        }
+    }
+
+    #[test]
+    fn parallel_same_clue_paths_cannot_pass_without_shortcutting() {
+        for distance in [2, 4, 12] {
+            for rotation in 0..4 {
+                for same_clue in [false, true] {
+                    let transform = |(y, x): (usize, usize)| match rotation {
+                        0 => (y, x),
+                        1 => (x, 12 - y),
+                        2 => (12 - y, 2 * distance + 6 - x),
+                        3 => (2 * distance + 6 - x, y),
+                        _ => unreachable!(),
+                    };
+                    let (height, width) = if rotation % 2 == 0 {
+                        (7, distance + 4)
+                    } else {
+                        (distance + 4, 7)
+                    };
+                    let mut problem = Problem::new(height, width, None);
+                    for (x, clue) in [(1, 17), (distance + 1, if same_clue { 17 } else { 23 })] {
+                        let (y, x) = transform((2, 2 * x));
+                        problem[(y / 2, x / 2)] = Some(clue);
+                    }
+                    let mut board = Board::new(problem);
+                    // Isolate this rule: the diagonal L canonicalization can
+                    // reject the reverse orientations before the paths approach.
+                    board.disallow_dl = Grid::new(height, width, false);
+                    board.disallow_dr = Grid::new(height, width, false);
+                    let initial_edges = board.edge_state.clone();
+                    let initial_labels = board.path_clue.clone();
+                    board.add_checkpoint();
+                    for x in [1, distance + 1] {
+                        for y in 1..4 {
+                            let (y, x) = transform((2 * y + 1, 2 * x));
+                            assert!(!board.decide_edge(y, x, EdgeState::Line),
+                                "distance {distance}, rotation {rotation}, same clue {same_clue}, edge ({y}, {x}): {board:?}");
+                        }
+                    }
+                    // These are internal vertices, not the growing endpoints.
+                    for x in [1, distance + 1] {
+                        let (y, x) = transform((4, 2 * x));
+                        assert_eq!(board.another_end[(y / 2, x / 2)], -1);
+                    }
+                    for x in 2..distance + 1 {
+                        for edge in [(3, 2 * x), (5, 2 * x), (4, 2 * x - 1), (4, 2 * x + 1)] {
+                            let (y, x) = transform(edge);
+                            assert!(!board.decide_edge(y, x, EdgeState::NoLine));
+                        }
+                    }
+                    board.verify_cut_capacity();
+                    assert_eq!(board.propagate_shortcuts(), same_clue,
+                        "distance {distance}, rotation {rotation}");
+                    board.undo();
+                    assert!(!board.inconsistent());
+                    assert_eq!(board.edge_state, initial_edges);
+                    assert_eq!(board.path_clue, initial_labels);
+                }
+            }
+        }
+    }
 
     // Isolate the geometric rule from the other canonicalization rules, which
     // may reject some rotations before the U itself is complete.

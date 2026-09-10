@@ -1,6 +1,7 @@
 use std::ops::Index;
 pub mod board;
 pub mod grid;
+mod shortcuts;
 pub mod solver;
 pub mod urls;
 mod vertex_cut;
@@ -10,6 +11,7 @@ use grid::Grid;
 // Internal optimization flags
 pub const OPTIMIZATION_DISALLOW_TRIVIAL_DETOUR: bool = true;
 pub const OPTIMIZATION_DISALLOW_U_DETOUR: bool = true;
+pub const OPTIMIZATION_DISALLOW_SAME_CLUE_SHORTCUT: bool = true;
 pub const OPTIMIZATION_L_SHAPE_CANONIZATION: bool = true;
 
 pub type Problem = Grid<Option<i32>>;

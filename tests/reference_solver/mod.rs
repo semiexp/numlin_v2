@@ -153,6 +153,42 @@ fn solve_by_csp(problem: &Problem) -> Vec<graph::BoolGridEdgesModel> {
         ),
     );
 
+    // Use final CSP line labels, independent of the incremental path labels in
+    // Board. Equal-clue occupied vertices must join when adjacent; with a longer
+    // straight gap, at least one interior vertex must be occupied.
+    if numlin_v2::OPTIMIZATION_DISALLOW_SAME_CLUE_SHORTCUT {
+        for y in 0..height {
+            for x in 0..width {
+                for xx in x + 1..width {
+                    let same_line = is_line.vertex_neighbors((y, x)).any()
+                        & is_line.vertex_neighbors((y, xx)).any()
+                        & cell_clue_id.at((y, x)).eq(cell_clue_id.at((y, xx)));
+                    if xx == x + 1 {
+                        solver.add_expr(same_line.imp(is_line.horizontal.at((y, x))));
+                    } else {
+                        solver.add_expr(same_line.imp(any(
+                            (x + 1..xx).map(|i| is_line.vertex_neighbors((y, i)).any())
+                                .collect::<Vec<_>>(),
+                        )));
+                    }
+                }
+                for yy in y + 1..height {
+                    let same_line = is_line.vertex_neighbors((y, x)).any()
+                        & is_line.vertex_neighbors((yy, x)).any()
+                        & cell_clue_id.at((y, x)).eq(cell_clue_id.at((yy, x)));
+                    if yy == y + 1 {
+                        solver.add_expr(same_line.imp(is_line.vertical.at((y, x))));
+                    } else {
+                        solver.add_expr(same_line.imp(any(
+                            (y + 1..yy).map(|i| is_line.vertex_neighbors((i, x)).any())
+                                .collect::<Vec<_>>(),
+                        )));
+                    }
+                }
+            }
+        }
+    }
+
     // acyclic
     let mut graph = graph::Graph::new((height - 1) * (width - 1) + 1);
     let outside = (height - 1) * (width - 1);
