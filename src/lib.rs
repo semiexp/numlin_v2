@@ -3,6 +3,7 @@ pub mod board;
 pub mod grid;
 pub mod solver;
 pub mod urls;
+mod vertex_cut;
 
 use grid::Grid;
 

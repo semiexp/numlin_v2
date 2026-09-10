@@ -1,4 +1,5 @@
 use crate::grid::Grid;
+use crate::vertex_cut::VertexCuts;
 use crate::{Answer, EdgeState, Problem};
 use std::fmt::Debug;
 
@@ -49,6 +50,11 @@ pub struct Board {
     // capacities being scanned in that pass (matching full recomputation).
     row_capacity: Vec<i32>,
     col_capacity: Vec<i32>,
+
+    // Packed undecided edges let saturated straight cuts skip decided edges.
+    row_undecided: Vec<u64>,
+    col_undecided: Vec<u64>,
+    vertex_cuts: VertexCuts,
 
     inconsistent: bool,
 
@@ -116,6 +122,9 @@ impl Board {
             cut_clue_pos: vec![[-1; 2]; max_clue as usize + 1],
             row_capacity: vec![0; height],
             col_capacity: vec![0; width],
+            row_undecided: Self::undecided_cut_edges(height - 1, width),
+            col_undecided: Self::undecided_cut_edges(width - 1, height),
+            vertex_cuts: VertexCuts::new(height, width, max_clue as usize + 1),
             inconsistent: false,
             history: Vec::new(),
         };
@@ -128,11 +137,23 @@ impl Board {
             for x in 0..width {
                 let p = (y * width + x) as i32;
                 board.update_cut_endpoint(p, board.another_end[p], true);
+                board.vertex_cuts.endpoint_changed(p);
             }
         }
         #[cfg(any(test, feature = "verify-cut-capacity"))]
         board.verify_cut_capacity();
         board
+    }
+
+    fn undecided_cut_edges(cuts: usize, length: usize) -> Vec<u64> {
+        let words = length.div_ceil(64);
+        let mut edges = vec![u64::MAX; cuts * words];
+        if length % 64 != 0 {
+            for cut in 0..cuts {
+                edges[cut * words + words - 1] = (1 << (length % 64)) - 1;
+            }
+        }
+        edges
     }
 
     pub fn height(&self) -> usize {
@@ -191,6 +212,25 @@ impl Board {
         };
         diff[index] += delta;
         diff[index + 1] -= delta;
+        let (mask, index, bit) = if y % 2 == 0 {
+            (
+                &mut self.col_undecided,
+                x / 2 * self.height.div_ceil(64) + y / 2 / 64,
+                y / 2 % 64,
+            )
+        } else {
+            (
+                &mut self.row_undecided,
+                y / 2 * self.width.div_ceil(64) + x / 2 / 64,
+                x / 2 % 64,
+            )
+        };
+        if delta > 0 {
+            mask[index] |= 1 << bit;
+        } else {
+            mask[index] &= !(1 << bit);
+        }
+        self.vertex_cuts.edge_changed(y, x);
     }
 
     fn update_cut_pair(&mut self, p: i32, q: i32, delta: i32) {
@@ -239,6 +279,7 @@ impl Board {
     fn replace_another_end(&mut self, p: i32, new_value: i32) {
         self.update_cut_endpoint(p, self.another_end[p], false);
         self.another_end[p] = new_value;
+        self.vertex_cuts.endpoint_changed(p);
         self.update_cut_endpoint(p, new_value, true);
     }
 
@@ -595,7 +636,28 @@ impl Board {
     // Deliberately retain the original full-board calculation as an independent
     // oracle. Integration tests can opt in; ordinary builds contain none of it.
     #[cfg(any(test, feature = "verify-cut-capacity"))]
-    fn verify_cut_capacity(&self) {
+    fn verify_cut_capacity(&mut self) {
+        self.vertex_cuts
+            .sync(&self.another_end, &self.edge_state, &self.cut_clue_pos);
+        self.vertex_cuts.verify(&self.another_end, &self.edge_state);
+        for y in 0..self.height {
+            for x in 0..self.width {
+                if y + 1 < self.height {
+                    let mask = self.row_undecided[y * self.width.div_ceil(64) + x / 64];
+                    assert_eq!(
+                        mask & (1 << (x % 64)) != 0,
+                        self.get_edge(2 * y + 1, 2 * x) == EdgeState::Undecided
+                    );
+                }
+                if x + 1 < self.width {
+                    let mask = self.col_undecided[x * self.height.div_ceil(64) + y / 64];
+                    assert_eq!(
+                        mask & (1 << (y % 64)) != 0,
+                        self.get_edge(2 * y, 2 * x + 1) == EdgeState::Undecided
+                    );
+                }
+            }
+        }
         let mut max_clue = 0;
         for y in 0..self.height {
             for x in 0..self.width {
@@ -706,8 +768,11 @@ impl Board {
             let mut has_update = false;
             for y in 0..(self.height - 1) {
                 if self.row_capacity[y] == 0 {
-                    for x in 0..self.width {
-                        if self.get_edge(y * 2 + 1, x * 2) == EdgeState::Undecided {
+                    let words = self.width.div_ceil(64);
+                    for word in 0..words {
+                        while self.row_undecided[y * words + word] != 0 {
+                            let x = word * 64
+                                + self.row_undecided[y * words + word].trailing_zeros() as usize;
                             if self.decide_edge(y * 2 + 1, x * 2, EdgeState::Line) {
                                 return self.inconsistent();
                             }
@@ -718,14 +783,34 @@ impl Board {
             }
             for x in 0..(self.width - 1) {
                 if self.col_capacity[x] == 0 {
-                    for y in 0..self.height {
-                        if self.get_edge(y * 2, x * 2 + 1) == EdgeState::Undecided {
+                    let words = self.height.div_ceil(64);
+                    for word in 0..words {
+                        while self.col_undecided[x * words + word] != 0 {
+                            let y = word * 64
+                                + self.col_undecided[x * words + word].trailing_zeros() as usize;
                             if self.decide_edge(y * 2, x * 2 + 1, EdgeState::Line) {
                                 return self.inconsistent();
                             }
                             has_update = true;
                         }
                     }
+                }
+            }
+            if has_update {
+                continue;
+            }
+            self.vertex_cuts
+                .sync(&self.another_end, &self.edge_state, &self.cut_clue_pos);
+            if !self.vertex_cuts.propagate(&self.another_end, &self.edge_state) {
+                self.set_inconsistent();
+                return true;
+            }
+            while let Some(((y, x), state)) = self.vertex_cuts.forced.pop() {
+                if self.get_edge(y, x) == EdgeState::Undecided {
+                    has_update = true;
+                }
+                if self.decide_edge(y, x, state) {
+                    return true;
                 }
             }
             if !has_update {
@@ -790,7 +875,7 @@ mod tests {
 
     #[test]
     fn saturated_cuts_complete_paths_and_undo() {
-        for (height, width) in [(1, 5), (5, 1)] {
+        for (height, width) in [(1, 5), (5, 1), (1, 70), (70, 1)] {
             let mut problem = Problem::new(height, width, None);
             problem[(0, 0)] = Some(17); // Sparse clue IDs are supported.
             problem[(height - 1, width - 1)] = Some(17);
@@ -800,7 +885,7 @@ mod tests {
             board.add_checkpoint();
             assert!(!board.cut_based_propagation());
             board.verify_cut_capacity();
-            for i in 0..4 {
+            for i in 0..height.max(width) - 1 {
                 let edge = if height == 1 {
                     (0, 2 * i + 1)
                 } else {
