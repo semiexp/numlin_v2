@@ -1,5 +1,5 @@
 use cspuz_rs::graph;
-use cspuz_rs::solver::{Solver, TRUE};
+use cspuz_rs::solver::{Solver, TRUE, any};
 
 use numlin_v2::{Answer, EdgeState, Problem};
 
@@ -31,6 +31,55 @@ fn solve_by_csp(problem: &Problem) -> Vec<graph::BoolGridEdgesModel> {
         for y in 0..(height - 1) {
             for x in 0..(width - 1) {
                 solver.add_expr(is_line.cell_neighbors((y, x)).count_true().le(2));
+            }
+        }
+    }
+
+    // Independently enumerate all U lengths and rotations. A detour may remain
+    // only when an interior shortcut vertex has a clue or is used by a line.
+    if numlin_v2::OPTIMIZATION_DISALLOW_U_DETOUR {
+        for y in 0..height {
+            for left in 0..width {
+                for right in left + 2..width {
+                    if (left + 1..right).any(|x| problem[(y, x)].is_some()) {
+                        continue;
+                    }
+                    let used_middle = any(
+                        (left + 1..right)
+                            .map(|x| is_line.vertex_neighbors((y, x)).any())
+                            .collect::<Vec<_>>(),
+                    );
+                    for other_y in [y.checked_sub(1), (y + 1 < height).then_some(y + 1)]
+                        .into_iter().flatten()
+                    {
+                        let detour = is_line.vertical.at((y.min(other_y), left))
+                            & is_line.vertical.at((y.min(other_y), right))
+                            & is_line.horizontal.slice((other_y..other_y + 1, left..right)).all();
+                        solver.add_expr(detour.imp(&used_middle));
+                    }
+                }
+            }
+        }
+        for x in 0..width {
+            for top in 0..height {
+                for bottom in top + 2..height {
+                    if (top + 1..bottom).any(|y| problem[(y, x)].is_some()) {
+                        continue;
+                    }
+                    let used_middle = any(
+                        (top + 1..bottom)
+                            .map(|y| is_line.vertex_neighbors((y, x)).any())
+                            .collect::<Vec<_>>(),
+                    );
+                    for other_x in [x.checked_sub(1), (x + 1 < width).then_some(x + 1)]
+                        .into_iter().flatten()
+                    {
+                        let detour = is_line.horizontal.at((top, x.min(other_x)))
+                            & is_line.horizontal.at((bottom, x.min(other_x)))
+                            & is_line.vertical.slice((top..bottom, other_x..other_x + 1)).all();
+                        solver.add_expr(detour.imp(&used_middle));
+                    }
+                }
             }
         }
     }

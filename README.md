@@ -1,6 +1,13 @@
 # numlin_v2
 The 2nd edition of a Numberlink solver
 
+U-shaped detours one cell deep and of any length are canonicalized in all four
+orientations. If every interior vertex of the straight shortcut is clue-free and
+confirmed unused, a complete U is rejected, or its last undecided edge is
+forbidden. Checks inspect only runs adjacent to changed edges or vertices. The
+incident-edge counts used to recognize unused vertices are updated on decisions
+and undo, and checked against a full scan in verification builds.
+
 Cut capacities are updated incrementally when edges or path endpoints change,
 including during backtracking. Saturated straight cuts visit only undecided edges
 using packed bit sets.

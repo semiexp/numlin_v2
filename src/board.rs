@@ -26,6 +26,10 @@ pub struct Board {
 
     has_clue: Grid<bool>, // height * width grid indicating whether each cell has a clue
 
+    // Number of incident edges that are Line or Undecided. Zero certifies an
+    // unused vertex (unless it has a clue), without rescanning its four edges.
+    usable_edges: Grid<u8>,
+
     edge_state: Grid<EdgeState>, // (2 * height - 1) * (2 * width - 1) grid of edge states
 
     // For each vertex, the end of the line that is connected to it.
@@ -68,10 +72,13 @@ impl Board {
         let mut has_clue = Grid::new(height, width, false);
         let mut another_end = Grid::new(height, width, -1);
         let mut max_clue = 0;
+        let mut usable_edges = Grid::new(height, width, 0);
 
         for y in 0..height {
             for x in 0..width {
                 let idx = y * width + x;
+                usable_edges[(y, x)] = (y > 0) as u8 + (y + 1 < height) as u8
+                    + (x > 0) as u8 + (x + 1 < width) as u8;
 
                 if let Some(value) = problem[(y, x)] {
                     max_clue = max_clue.max(value);
@@ -113,6 +120,7 @@ impl Board {
             width,
             problem,
             has_clue,
+            usable_edges,
             edge_state: Grid::new(2 * height - 1, 2 * width - 1, EdgeState::Undecided),
             another_end,
             disallow_dl,
@@ -186,6 +194,10 @@ impl Board {
             match history {
                 History::Checkpoint => break,
                 History::EdgeState((y, x)) => {
+                    if self.edge_state[(y, x)] == EdgeState::NoLine {
+                        self.usable_edges[(y / 2, x / 2)] += 1;
+                        self.usable_edges[((y + 1) / 2, (x + 1) / 2)] += 1;
+                    }
                     if self.edge_state[(y, x)] != EdgeState::Undecided {
                         self.update_cut_edge(y, x, 1);
                     }
@@ -315,6 +327,10 @@ impl Board {
 
         if state != EdgeState::Undecided {
             self.update_cut_edge(y, x, -1);
+        }
+        if state == EdgeState::NoLine {
+            self.usable_edges[(y / 2, x / 2)] -= 1;
+            self.usable_edges[((y + 1) / 2, (x + 1) / 2)] -= 1;
         }
         self.edge_state[(y, x)] = state;
         self.history.push(History::EdgeState((y, x)));
@@ -526,7 +542,107 @@ impl Board {
             }
         }
 
+        if crate::OPTIMIZATION_DISALLOW_U_DETOUR && state == EdgeState::Line {
+            let (cy, cx) = ((y / 2) as isize, (x / 2) as isize);
+            // Every U containing this edge has an unused interior vertex
+            // one cell to either side of one of the edge's endpoints.
+            let centers = if y % 2 == 0 {
+                [(cy - 1, cx), (cy - 1, cx + 1), (cy + 1, cx), (cy + 1, cx + 1)]
+            } else {
+                [(cy, cx - 1), (cy + 1, cx - 1), (cy, cx + 1), (cy + 1, cx + 1)]
+            };
+            for (cy, cx) in centers {
+                if cy >= 0 && cy < self.height as isize && cx >= 0 && cx < self.width as isize {
+                    if self.check_u_detours_at(cy as usize, cx as usize) {
+                        return true;
+                    }
+                }
+            }
+        }
+
         self.inconsistent()
+    }
+
+    fn unused_vertex(&self, y: usize, x: usize) -> bool {
+        self.usable_edges[(y, x)] == 0 && !self.has_clue(y, x)
+    }
+
+    // A U around a run of unused vertices can be shortened by two edges. Its
+    // endpoints cannot themselves be unused, so only the maximal run containing
+    // this vertex can have a complete U. Runs may be arbitrarily long.
+    fn check_u_detours_at(&mut self, y: usize, x: usize) -> bool {
+        if !self.unused_vertex(y, x) {
+            return self.inconsistent();
+        }
+        let mut left = x;
+        let mut right = x;
+        while left > 0 && self.unused_vertex(y, left - 1) {
+            left -= 1;
+        }
+        while right + 1 < self.width && self.unused_vertex(y, right + 1) {
+            right += 1;
+        }
+        if left > 0 && right + 1 < self.width {
+            if y > 0 && self.check_horizontal_u(y, y - 1, left - 1, right + 1) {
+                return true;
+            }
+            if y + 1 < self.height && self.check_horizontal_u(y, y + 1, left - 1, right + 1) {
+                return true;
+            }
+        }
+        let mut top = y;
+        let mut bottom = y;
+        while top > 0 && self.unused_vertex(top - 1, x) {
+            top -= 1;
+        }
+        while bottom + 1 < self.height && self.unused_vertex(bottom + 1, x) {
+            bottom += 1;
+        }
+        if top > 0 && bottom + 1 < self.height {
+            if x > 0 && self.check_vertical_u(x, x - 1, top - 1, bottom + 1) {
+                return true;
+            }
+            if x + 1 < self.width && self.check_vertical_u(x, x + 1, top - 1, bottom + 1) {
+                return true;
+            }
+        }
+        self.inconsistent()
+    }
+
+    fn check_horizontal_u(&mut self, y: usize, other_y: usize, left: usize, right: usize) -> bool {
+        let sides = [(y + other_y, 2 * left), (y + other_y, 2 * right)];
+        self.check_u_detour(
+            sides.into_iter().chain((left..right).map(|x| (2 * other_y, 2 * x + 1))),
+        )
+    }
+
+    fn check_vertical_u(&mut self, x: usize, other_x: usize, top: usize, bottom: usize) -> bool {
+        let sides = [(2 * top, x + other_x), (2 * bottom, x + other_x)];
+        self.check_u_detour(
+            sides.into_iter().chain((top..bottom).map(|y| (2 * y + 1, 2 * other_x))),
+        )
+    }
+
+    fn check_u_detour(&mut self, edges: impl Iterator<Item = (usize, usize)>) -> bool {
+        let mut undecided = None;
+        for (y, x) in edges {
+            match self.get_edge(y, x) {
+                EdgeState::NoLine => return self.inconsistent(),
+                EdgeState::Undecided => {
+                    if undecided.is_some() {
+                        return self.inconsistent();
+                    }
+                    undecided = Some((y, x));
+                }
+                EdgeState::Line => {}
+            }
+        }
+        if let Some((y, x)) = undecided {
+            self.decide_edge(y, x, EdgeState::NoLine)
+        } else {
+            self.set_inconsistent();
+            true
+        }
     }
 
     fn check_vertex(&mut self, y: usize, x: usize) -> bool {
@@ -603,6 +719,12 @@ impl Board {
             return self.inconsistent();
         }
 
+        if crate::OPTIMIZATION_DISALLOW_U_DETOUR && degree == 0 && undet == 0 {
+            if self.check_u_detours_at(y, x) {
+                return true;
+            }
+        }
+
         if undet == 1 {
             let new_state = if degree == 1 {
                 EdgeState::Line
@@ -656,6 +778,24 @@ impl Board {
                         self.get_edge(2 * y, 2 * x + 1) == EdgeState::Undecided
                     );
                 }
+            }
+        }
+        for y in 0..self.height {
+            for x in 0..self.width {
+                let mut usable = 0;
+                if y > 0 && self.get_edge(2 * y - 1, 2 * x) != EdgeState::NoLine {
+                    usable += 1;
+                }
+                if y + 1 < self.height && self.get_edge(2 * y + 1, 2 * x) != EdgeState::NoLine {
+                    usable += 1;
+                }
+                if x > 0 && self.get_edge(2 * y, 2 * x - 1) != EdgeState::NoLine {
+                    usable += 1;
+                }
+                if x + 1 < self.width && self.get_edge(2 * y, 2 * x + 1) != EdgeState::NoLine {
+                    usable += 1;
+                }
+                assert_eq!(self.usable_edges[(y, x)], usable, "usable edges at ({y}, {x})");
             }
         }
         let mut max_clue = 0;
@@ -872,6 +1012,142 @@ mod tests {
     use rand::rngs::StdRng;
     use rand::seq::SliceRandom;
     use rand::{Rng, SeedableRng};
+
+    // Isolate the geometric rule from the other canonicalization rules, which
+    // may reject some rotations before the U itself is complete.
+    fn u_pattern(
+        length: usize,
+        rotation: usize,
+    ) -> (Board, Vec<(usize, usize)>, Vec<(usize, usize)>) {
+        let transform = |(y, x): (usize, usize)| match rotation {
+            0 => (y, x),
+            1 => (x, 6 - y),
+            2 => (6 - y, 2 * length + 4 - x),
+            3 => (2 * length + 4 - x, y),
+            _ => unreachable!(),
+        };
+        let (height, width) = if rotation % 2 == 0 {
+            (4, length + 3)
+        } else {
+            (length + 3, 4)
+        };
+        let mut board = Board::new(Problem::new(height, width, None));
+        board.edge_state = Grid::new(2 * height - 1, 2 * width - 1, EdgeState::NoLine);
+        board.usable_edges = Grid::new(height, width, 0);
+        let path: Vec<_> = [(3, 2), (3, 2 * length + 2)].into_iter()
+            .chain((1..=length).map(|x| (4, 2 * x + 1)))
+            .map(transform)
+            .collect();
+        for &(y, x) in &path {
+            board.edge_state[(y, x)] = EdgeState::Line;
+            board.usable_edges[(y / 2, x / 2)] += 1;
+            board.usable_edges[((y + 1) / 2, (x + 1) / 2)] += 1;
+        }
+        let middle = (2..=length)
+            .map(|x| {
+                let (y, x) = transform((2, 2 * x));
+                (y / 2, x / 2)
+            })
+            .collect();
+        (board, middle, path)
+    }
+
+    #[test]
+    fn u_detours_of_any_length_and_rotation_are_rejected() {
+        for length in [2, 3, 7, 20] {
+            for rotation in 0..4 {
+                let (mut board, middle, _) = u_pattern(length, rotation);
+                let (y, x) = middle[middle.len() / 2];
+                assert!(
+                    board.check_u_detours_at(y, x),
+                    "length {length}, rotation {rotation}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn u_detours_forbid_any_last_edge() {
+        for length in [2, 7] {
+            for rotation in 0..4 {
+                for missing in 0..length + 2 {
+                    let (mut board, middle, path) = u_pattern(length, rotation);
+                    let edge = path[missing];
+                    board.edge_state[edge] = EdgeState::Undecided;
+                    let (y, x) = middle[0];
+                    board.check_u_detours_at(y, x);
+                    assert_eq!(board.get_edge(edge.0, edge.1), EdgeState::NoLine);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn u_detours_require_every_shortcut_vertex_to_be_unused() {
+        for rotation in 0..4 {
+            for protected in 0..6 {
+                for state in [EdgeState::Undecided, EdgeState::Line] {
+                    let (mut board, middle, _) = u_pattern(7, rotation);
+                    let (y, x) = middle[protected];
+                    let edge = match rotation {
+                        0 => (2 * y - 1, 2 * x),
+                        1 => (2 * y, 2 * x + 1),
+                        2 => (2 * y + 1, 2 * x),
+                        3 => (2 * y, 2 * x - 1),
+                        _ => unreachable!(),
+                    };
+                    board.edge_state[edge] = state;
+                    board.usable_edges[(edge.0 / 2, edge.1 / 2)] += 1;
+                    board.usable_edges[((edge.0 + 1) / 2, (edge.1 + 1) / 2)] += 1;
+                    for &(y, x) in &middle {
+                        assert!(!board.check_u_detours_at(y, x));
+                    }
+                    assert!(board.history.is_empty());
+                }
+                let (mut board, middle, _) = u_pattern(7, rotation);
+                board.has_clue[middle[protected]] = true;
+                for &(y, x) in &middle {
+                    assert!(!board.check_u_detours_at(y, x));
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn u_detour_decisions_and_undo_restore_the_board() {
+        for length in [2, 7] {
+            let mut problem = Problem::new(2, length + 1, None);
+            problem[(0, 0)] = Some(0);
+            problem[(0, length)] = Some(0);
+            let mut board = Board::new(problem);
+            let initial_edges = board.edge_state.clone();
+            let initial_usable = board.usable_edges.clone();
+            // Exercise both the final Line event and an interior vertex becoming
+            // unused later. Recursive propagation may reject a branch earlier.
+            for empty_first in [false, true] {
+                board.add_checkpoint();
+                for pass in 0..2 {
+                    if (pass == 0) == empty_first {
+                        for x in 0..length {
+                            board.decide_edge(0, 2 * x + 1, EdgeState::NoLine);
+                        }
+                    } else {
+                        board.decide_edge(1, 0, EdgeState::Line);
+                        board.decide_edge(1, 2 * length, EdgeState::Line);
+                        for x in 0..length {
+                            board.decide_edge(2, 2 * x + 1, EdgeState::Line);
+                        }
+                    }
+                }
+                assert!(board.inconsistent());
+                board.verify_cut_capacity();
+                board.undo();
+                assert!(!board.inconsistent());
+                assert_eq!(board.edge_state, initial_edges);
+                assert_eq!(board.usable_edges, initial_usable);
+            }
+        }
+    }
 
     #[test]
     fn saturated_cuts_complete_paths_and_undo() {
