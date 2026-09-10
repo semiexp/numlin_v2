@@ -3,6 +3,10 @@ name = "numlin_v2"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+# Expensive full-recomputation assertions, including in integration tests.
+verify-cut-capacity = []
+
 [dependencies]
 
 [dev-dependencies]

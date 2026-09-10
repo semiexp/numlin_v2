@@ -38,6 +38,18 @@ pub struct Board {
     disallow_dl: Grid<bool>,
     disallow_dr: Grid<bool>,
 
+    // Cut slack = undecided crossing edges + crossings of clue-free paths
+    //            - crossings required between the two endpoints of each clue.
+    // Range contributions are stored as differences, so an endpoint change costs O(1).
+    row_capacity_diff: Vec<i32>,
+    col_capacity_diff: Vec<i32>,
+    cut_clue_pos: Vec<[i32; 2]>,
+
+    // Reused snapshots: decisions during a propagation pass must not change the
+    // capacities being scanned in that pass (matching full recomputation).
+    row_capacity: Vec<i32>,
+    col_capacity: Vec<i32>,
+
     inconsistent: bool,
 
     history: Vec<History>, // History of decisions made on the board, used for backtracking.
@@ -49,12 +61,14 @@ impl Board {
         let width = problem.width();
         let mut has_clue = Grid::new(height, width, false);
         let mut another_end = Grid::new(height, width, -1);
+        let mut max_clue = 0;
 
         for y in 0..height {
             for x in 0..width {
                 let idx = y * width + x;
 
                 if let Some(value) = problem[(y, x)] {
+                    max_clue = max_clue.max(value);
                     has_clue[(y, x)] = true;
                     another_end[(y, x)] = -value - 2;
                 } else {
@@ -88,7 +102,7 @@ impl Board {
             }
         }
 
-        Self {
+        let mut board = Self {
             height,
             width,
             problem,
@@ -97,9 +111,28 @@ impl Board {
             another_end,
             disallow_dl,
             disallow_dr,
+            row_capacity_diff: vec![0; height],
+            col_capacity_diff: vec![0; width],
+            cut_clue_pos: vec![[-1; 2]; max_clue as usize + 1],
+            row_capacity: vec![0; height],
+            col_capacity: vec![0; width],
             inconsistent: false,
             history: Vec::new(),
+        };
+        // Initially every crossing edge is undecided.
+        board.row_capacity_diff[0] += width as i32;
+        board.row_capacity_diff[height - 1] -= width as i32;
+        board.col_capacity_diff[0] += height as i32;
+        board.col_capacity_diff[width - 1] -= height as i32;
+        for y in 0..height {
+            for x in 0..width {
+                let p = (y * width + x) as i32;
+                board.update_cut_endpoint(p, board.another_end[p], true);
+            }
         }
+        #[cfg(any(test, feature = "verify-cut-capacity"))]
+        board.verify_cut_capacity();
+        board
     }
 
     pub fn height(&self) -> usize {
@@ -132,23 +165,88 @@ impl Board {
             match history {
                 History::Checkpoint => break,
                 History::EdgeState((y, x)) => {
+                    if self.edge_state[(y, x)] != EdgeState::Undecided {
+                        self.update_cut_edge(y, x, 1);
+                    }
                     self.edge_state[(y, x)] = EdgeState::Undecided;
                 }
                 History::AnotherEnd(p, v) => {
-                    self.another_end[p] = v;
+                    self.replace_another_end(p, v);
                 }
                 History::Inconsistent => {
                     self.inconsistent = false;
                 }
             }
         }
+        #[cfg(any(test, feature = "verify-cut-capacity"))]
+        self.verify_cut_capacity();
+    }
+
+    // Update one undecided crossing edge, including the inverse operation on undo.
+    fn update_cut_edge(&mut self, y: usize, x: usize, delta: i32) {
+        let (diff, index) = if y % 2 == 0 {
+            (&mut self.col_capacity_diff, x / 2)
+        } else {
+            (&mut self.row_capacity_diff, y / 2)
+        };
+        diff[index] += delta;
+        diff[index + 1] -= delta;
+    }
+
+    fn update_cut_pair(&mut self, p: i32, q: i32, delta: i32) {
+        let (y1, x1) = (p as usize / self.width, p as usize % self.width);
+        let (y2, x2) = (q as usize / self.width, q as usize % self.width);
+        self.row_capacity_diff[y1.min(y2)] += delta;
+        self.row_capacity_diff[y1.max(y2)] -= delta;
+        self.col_capacity_diff[x1.min(x2)] += delta;
+        self.col_capacity_diff[x1.max(x2)] -= delta;
+    }
+
+    fn update_cut_endpoint(&mut self, p: i32, ae: i32, adding: bool) {
+        if ae >= 0 {
+            // Count a clue-free path only at its smaller endpoint.
+            if p < ae {
+                self.update_cut_pair(p, ae, if adding { 1 } else { -1 });
+            }
+        } else if ae <= -2 {
+            let clue = (-ae - 2) as usize;
+            let mut pos = self.cut_clue_pos[clue];
+            if adding {
+                if pos[0] == -1 {
+                    pos[0] = p;
+                } else {
+                    assert_eq!(pos[1], -1, "more than two endpoints for a clue");
+                    pos[1] = p;
+                }
+                if pos[0] >= 0 && pos[1] >= 0 {
+                    self.update_cut_pair(pos[0], pos[1], -1);
+                }
+            } else {
+                if pos[0] >= 0 && pos[1] >= 0 {
+                    self.update_cut_pair(pos[0], pos[1], 1);
+                }
+                if pos[0] == p {
+                    pos[0] = -1;
+                } else {
+                    debug_assert_eq!(pos[1], p);
+                    pos[1] = -1;
+                }
+            }
+            self.cut_clue_pos[clue] = pos;
+        }
+    }
+
+    fn replace_another_end(&mut self, p: i32, new_value: i32) {
+        self.update_cut_endpoint(p, self.another_end[p], false);
+        self.another_end[p] = new_value;
+        self.update_cut_endpoint(p, new_value, true);
     }
 
     fn update_another_end(&mut self, p: i32, new_value: i32) {
         let old_value = self.another_end[p];
         if old_value != new_value {
             self.history.push(History::AnotherEnd(p, old_value));
-            self.another_end[p] = new_value;
+            self.replace_another_end(p, new_value);
         }
     }
 
@@ -174,6 +272,9 @@ impl Board {
             return self.inconsistent();
         }
 
+        if state != EdgeState::Undecided {
+            self.update_cut_edge(y, x, -1);
+        }
         self.edge_state[(y, x)] = state;
         self.history.push(History::EdgeState((y, x)));
 
@@ -491,85 +592,112 @@ impl Board {
         self.inconsistent()
     }
 
+    // Deliberately retain the original full-board calculation as an independent
+    // oracle. Integration tests can opt in; ordinary builds contain none of it.
+    #[cfg(any(test, feature = "verify-cut-capacity"))]
+    fn verify_cut_capacity(&self) {
+        let mut max_clue = 0;
+        for y in 0..self.height {
+            for x in 0..self.width {
+                if let Some(value) = self.problem[(y, x)] {
+                    max_clue = max_clue.max(value);
+                }
+            }
+        }
+
+        let mut row_capacity_diff = vec![0; self.height];
+        let mut col_capacity_diff = vec![0; self.width];
+
+        let mut clue_pos = vec![(None, None); max_clue as usize + 1];
+        for y in 0..self.height {
+            for x in 0..self.width {
+                let ae = self.another_end[(y, x)];
+                if ae <= -2 {
+                    let clue_value = -ae - 2;
+                    if clue_pos[clue_value as usize].0.is_none() {
+                        clue_pos[clue_value as usize].0 = Some((y, x));
+                    } else {
+                        assert!(clue_pos[clue_value as usize].1.is_none());
+                        clue_pos[clue_value as usize].1 = Some((y, x));
+                    }
+                } else if ae >= 0 {
+                    if y * self.width + x < ae as usize {
+                        let y2 = ae as usize / self.width;
+                        let x2 = ae as usize % self.width;
+
+                        row_capacity_diff[y.min(y2)] += 1;
+                        row_capacity_diff[y.max(y2)] -= 1;
+                        col_capacity_diff[x.min(x2)] += 1;
+                        col_capacity_diff[x.max(x2)] -= 1;
+                    }
+                }
+            }
+        }
+        for c in 0..=max_clue {
+            if let (Some((y1, x1)), Some((y2, x2))) = clue_pos[c as usize] {
+                row_capacity_diff[y1.min(y2)] -= 1;
+                row_capacity_diff[y1.max(y2)] += 1;
+                col_capacity_diff[x1.min(x2)] -= 1;
+                col_capacity_diff[x1.max(x2)] += 1;
+            }
+        }
+        for y in 0..self.height {
+            for x in 0..self.width {
+                if x < self.width - 1 && self.get_edge(y * 2, x * 2 + 1) == EdgeState::Undecided
+                {
+                    col_capacity_diff[x] += 1;
+                    col_capacity_diff[x + 1] -= 1;
+                }
+                if y < self.height - 1
+                    && self.get_edge(y * 2 + 1, x * 2) == EdgeState::Undecided
+                {
+                    row_capacity_diff[y] += 1;
+                    row_capacity_diff[y + 1] -= 1;
+                }
+            }
+        }
+        assert_eq!(
+            self.row_capacity_diff, row_capacity_diff,
+            "row cut mismatch: {self:?}"
+        );
+        assert_eq!(
+            self.col_capacity_diff, col_capacity_diff,
+            "column cut mismatch: {self:?}"
+        );
+        for (clue, (first, second)) in clue_pos.into_iter().enumerate() {
+            let mut expected =
+                [first, second].map(|pos| pos.map_or(-1, |(y, x)| (y * self.width + x) as i32));
+            let mut actual = self.cut_clue_pos[clue];
+            expected.sort_unstable();
+            actual.sort_unstable();
+            assert_eq!(actual, expected, "clue endpoint mismatch for {clue}: {self:?}");
+        }
+    }
+
     pub fn cut_based_propagation(&mut self) -> bool {
         loop {
-            let mut max_clue = 0;
-            for y in 0..self.height {
-                for x in 0..self.width {
-                    if let Some(value) = self.problem[(y, x)] {
-                        max_clue = max_clue.max(value);
-                    }
-                }
-            }
+            #[cfg(any(test, feature = "verify-cut-capacity"))]
+            self.verify_cut_capacity();
 
-            let mut row_capacity_diff = vec![0; self.height];
-            let mut col_capacity_diff = vec![0; self.width];
-
-            let mut clue_pos = vec![(None, None); max_clue as usize + 1];
+            let mut capacity = 0;
             for y in 0..self.height {
-                for x in 0..self.width {
-                    let ae = self.another_end[(y, x)];
-                    if ae <= -2 {
-                        let clue_value = -ae - 2;
-                        if clue_pos[clue_value as usize].0.is_none() {
-                            clue_pos[clue_value as usize].0 = Some((y, x));
-                        } else {
-                            assert!(clue_pos[clue_value as usize].1.is_none());
-                            clue_pos[clue_value as usize].1 = Some((y, x));
-                        }
-                    } else if ae >= 0 {
-                        if y * self.width + x < ae as usize {
-                            let y2 = ae as usize / self.width;
-                            let x2 = ae as usize % self.width;
-
-                            row_capacity_diff[y.min(y2)] += 1;
-                            row_capacity_diff[y.max(y2)] -= 1;
-                            col_capacity_diff[x.min(x2)] += 1;
-                            col_capacity_diff[x.max(x2)] -= 1;
-                        }
-                    }
-                }
+                capacity += self.row_capacity_diff[y];
+                self.row_capacity[y] = capacity;
             }
-            for c in 0..=max_clue {
-                if let (Some((y1, x1)), Some((y2, x2))) = clue_pos[c as usize] {
-                    row_capacity_diff[y1.min(y2)] -= 1;
-                    row_capacity_diff[y1.max(y2)] += 1;
-                    col_capacity_diff[x1.min(x2)] -= 1;
-                    col_capacity_diff[x1.max(x2)] += 1;
-                }
-            }
-            for y in 0..self.height {
-                for x in 0..self.width {
-                    if x < self.width - 1 && self.get_edge(y * 2, x * 2 + 1) == EdgeState::Undecided
-                    {
-                        col_capacity_diff[x] += 1;
-                        col_capacity_diff[x + 1] -= 1;
-                    }
-                    if y < self.height - 1
-                        && self.get_edge(y * 2 + 1, x * 2) == EdgeState::Undecided
-                    {
-                        row_capacity_diff[y] += 1;
-                        row_capacity_diff[y + 1] -= 1;
-                    }
-                }
-            }
-            let mut row_capacity = row_capacity_diff;
-            let mut col_capacity = col_capacity_diff;
-            for y in 1..self.height {
-                row_capacity[y] += row_capacity[y - 1];
-            }
-            for x in 1..self.width {
-                col_capacity[x] += col_capacity[x - 1];
+            capacity = 0;
+            for x in 0..self.width {
+                capacity += self.col_capacity_diff[x];
+                self.col_capacity[x] = capacity;
             }
 
             for y in 0..(self.height - 1) {
-                if row_capacity[y] < 0 {
+                if self.row_capacity[y] < 0 {
                     self.set_inconsistent();
                     return self.inconsistent();
                 }
             }
             for x in 0..(self.width - 1) {
-                if col_capacity[x] < 0 {
+                if self.col_capacity[x] < 0 {
                     self.set_inconsistent();
                     return self.inconsistent();
                 }
@@ -577,7 +705,7 @@ impl Board {
 
             let mut has_update = false;
             for y in 0..(self.height - 1) {
-                if row_capacity[y] == 0 {
+                if self.row_capacity[y] == 0 {
                     for x in 0..self.width {
                         if self.get_edge(y * 2 + 1, x * 2) == EdgeState::Undecided {
                             if self.decide_edge(y * 2 + 1, x * 2, EdgeState::Line) {
@@ -589,7 +717,7 @@ impl Board {
                 }
             }
             for x in 0..(self.width - 1) {
-                if col_capacity[x] == 0 {
+                if self.col_capacity[x] == 0 {
                     for y in 0..self.height {
                         if self.get_edge(y * 2, x * 2 + 1) == EdgeState::Undecided {
                             if self.decide_edge(y * 2, x * 2 + 1, EdgeState::Line) {
@@ -650,5 +778,144 @@ impl Debug for Board {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::rngs::StdRng;
+    use rand::seq::SliceRandom;
+    use rand::{Rng, SeedableRng};
+
+    #[test]
+    fn saturated_cuts_complete_paths_and_undo() {
+        for (height, width) in [(1, 5), (5, 1)] {
+            let mut problem = Problem::new(height, width, None);
+            problem[(0, 0)] = Some(17); // Sparse clue IDs are supported.
+            problem[(height - 1, width - 1)] = Some(17);
+            let mut board = Board::new(problem);
+            let initial_edges = board.edge_state.clone();
+            let initial_endpoints = board.another_end.clone();
+            board.add_checkpoint();
+            assert!(!board.cut_based_propagation());
+            board.verify_cut_capacity();
+            for i in 0..4 {
+                let edge = if height == 1 {
+                    (0, 2 * i + 1)
+                } else {
+                    (2 * i + 1, 0)
+                };
+                assert_eq!(board.get_edge(edge.0, edge.1), EdgeState::Line);
+            }
+            assert_eq!(board.cut_clue_pos[17], [-1, -1]);
+            board.undo();
+            assert_eq!(board.edge_state, initial_edges);
+            assert_eq!(board.another_end, initial_endpoints);
+            assert!(!board.inconsistent());
+        }
+    }
+
+    #[test]
+    fn negative_cuts_reject_and_undo() {
+        for (height, width) in [(1, 5), (5, 1)] {
+            let mut problem = Problem::new(height, width, None);
+            for (i, clue) in [(0, 0), (1, 7), (3, 0), (4, 7)] {
+                let pos = if height == 1 { (0, i) } else { (i, 0) };
+                problem[pos] = Some(clue);
+            }
+            let mut board = Board::new(problem);
+            board.add_checkpoint();
+            assert!(board.cut_based_propagation());
+            board.verify_cut_capacity();
+            board.undo();
+            assert!(!board.inconsistent());
+            assert!(board.cut_based_propagation());
+        }
+    }
+
+    #[test]
+    fn random_decisions_propagation_and_nested_undo_match_full_recomputation() {
+        let mut rng = StdRng::seed_from_u64(0x637574);
+        for (height, width) in [(1, 1), (1, 6), (6, 1), (3, 4), (4, 3), (6, 6)] {
+            for _ in 0..40 {
+                let mut problem = Problem::new(height, width, None);
+                let mut vertices: Vec<_> = (0..height)
+                    .flat_map(|y| (0..width).map(move |x| (y, x)))
+                    .collect();
+                vertices.shuffle(&mut rng);
+                let pairs = rng.gen_range(0..=vertices.len() / 2);
+                for pair in 0..pairs {
+                    problem[vertices[2 * pair]] = Some((pair * 3) as i32);
+                    problem[vertices[2 * pair + 1]] = Some((pair * 3) as i32);
+                }
+                // Also exercise the existing behavior for unpaired clues.
+                if 2 * pairs < vertices.len() && rng.gen_bool(0.5) {
+                    problem[vertices[2 * pairs]] = Some((pairs * 3) as i32);
+                }
+                let edges: Vec<_> = (0..2 * height - 1)
+                    .flat_map(|y| (0..2 * width - 1).map(move |x| (y, x)))
+                    .filter(|&(y, x)| y % 2 != x % 2)
+                    .collect();
+                let mut board = Board::new(problem);
+                let mut snapshots = Vec::new();
+                for _ in 0..120 {
+                    if !snapshots.is_empty() && (board.inconsistent() || rng.gen_bool(0.3)) {
+                        board.undo();
+                        assert_eq!(
+                            (
+                                board.edge_state.clone(),
+                                board.another_end.clone(),
+                                board.inconsistent(),
+                            ),
+                            snapshots.pop().unwrap()
+                        );
+                        continue;
+                    }
+                    snapshots.push((
+                        board.edge_state.clone(),
+                        board.another_end.clone(),
+                        board.inconsistent(),
+                    ));
+                    board.add_checkpoint();
+                    if !edges.is_empty() && rng.gen_bool(0.8) {
+                        let &(y, x) = edges.choose(&mut rng).unwrap();
+                        let state = if rng.gen_bool(0.5) {
+                            EdgeState::Line
+                        } else {
+                            EdgeState::NoLine
+                        };
+                        // Include already decided edges, contradictory decisions and
+                        // recursive vertex propagation, then check even failed branches.
+                        board.decide_edge(y, x, state);
+                        board.verify_cut_capacity();
+                    }
+                    if !board.inconsistent() && rng.gen_bool(0.5) {
+                        board.cut_based_propagation();
+                        board.verify_cut_capacity();
+                    }
+                }
+                while let Some(snapshot) = snapshots.pop() {
+                    board.undo();
+                    assert_eq!(
+                        (
+                            board.edge_state.clone(),
+                            board.another_end.clone(),
+                            board.inconsistent(),
+                        ),
+                        snapshot
+                    );
+                }
+                assert!(board.history.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "row cut mismatch")]
+    fn verifier_detects_corrupted_capacity() {
+        let mut board = Board::new(Problem::new(2, 3, None));
+        board.row_capacity_diff[0] += 1;
+        board.verify_cut_capacity();
     }
 }
